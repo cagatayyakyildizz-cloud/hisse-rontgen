@@ -149,6 +149,46 @@ def test_loss_making_company_gets_zero_valuation_not_missing(make_bundle):
     assert "Değerleme" not in res["missing_inputs"]
 
 
+# --- Yahoo'nun bos "son ceyrek" sutunu: TTM eski yillik veriye dusmemeli ---------------------------
+
+def test_ttm_skips_empty_placeholder_quarter(make_bundle):
+    # NVDA vakasi: 2026-10-31 sutunu bos; gercek TTM = 96.22 + 81.61 + 68.13 + 57.01 = 302.97
+    nan = float("nan")
+    q_inc = statement(
+        {"Total Revenue": [nan, 96.22, 81.61, 68.13, 57.01, 46.74],
+         "Operating Income": [nan, 63.73, 53.54, 44.30, 36.01, 28.44]},
+        ["2026-10-31", "2026-07-31", "2026-04-30", "2026-01-31", "2025-10-31", "2025-07-31"],
+    )
+    inc = statement({"Total Revenue": [215.94, 130.5], "Operating Income": [130.39, 81.45]}, ["2026-01-31", "2025-01-31"])
+    res = analyze_fundamental(make_bundle(inc=inc, q_inc=q_inc))
+    # Marj (63.73+53.54+44.30+36.01) / 302.97 olmali; yillik 130.39/215.94 degil
+    assert res["profitability"]["ebit_margin_pct"] == pytest.approx(197.58 / 302.97 * 100, abs=0.05)
+
+
+def test_ttm_requires_consecutive_quarters(make_bundle):
+    # AMAT vakasi: aradaki ceyrek eksik -> 4 ardisik ceyrek yok -> yillik degere dus
+    nan = float("nan")
+    q_inc = statement(
+        {"Total Revenue": [9.0, 8.0, nan, 7.0, 6.0], "Operating Income": [3.0, 2.5, nan, 2.0, 1.8]},
+        ["2026-07-31", "2026-04-30", "2026-01-31", "2025-10-31", "2025-07-31"],
+    )
+    inc = statement({"Total Revenue": [28.0, 27.0], "Operating Income": [8.4, 7.8]}, ["2025-10-31", "2024-10-31"])
+    res = analyze_fundamental(make_bundle(inc=inc, q_inc=q_inc))
+    assert res["profitability"]["ebit_margin_pct"] == pytest.approx(8.4 / 28.0 * 100, abs=0.05)
+
+
+def test_empty_latest_annual_column_is_ignored(make_bundle):
+    # AMAT vakasi: yillik tablonun en yeni sutunu tamamen bos -> gelir "yok" olmamali
+    nan = float("nan")
+    inc = statement({"Total Revenue": [nan, 28.37, 27.18], "Operating Income": [nan, 8.47, 7.87],
+                     "Net Income": [nan, 7.0, 6.5]},
+                    ["2026-10-31", "2025-10-31", "2024-10-31"])
+    res = analyze_fundamental(make_bundle(inc=inc))
+    assert res["profitability"]["ebit_margin_pct"] == pytest.approx(8.47 / 28.37 * 100, abs=0.05)
+    assert res["growth"]["rev_yoy_pct"] == pytest.approx((28.37 / 27.18 - 1) * 100, abs=0.05)
+    assert res["history_table"][0]["year"] == "2025"
+
+
 # --- 4. BIST: buyume dolar bazinda (enflasyon etkisi disarida) ---------------------------------
 
 def _usdtry(start: str, end: str, start_rate: float, end_rate: float) -> pd.DataFrame:

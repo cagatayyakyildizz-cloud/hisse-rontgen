@@ -446,7 +446,10 @@
     ]);
 
     // Financial history table
-    $("finCurrNote").textContent = `Para birimi: ${f.financial_currency}`;
+    const asOf = f.data_as_of || {};
+    $("finCurrNote").textContent = `Para birimi: ${f.financial_currency}` +
+      (asOf.income_ttm_through ? ` · Son 12 ay: ${asOf.income_ttm_through} itibarıyla` : "") +
+      (asOf.balance_sheet ? ` · Bilanço: ${asOf.balance_sheet}` : "");
     const body = $("finHistoryBody");
     body.innerHTML = "";
     if (!f.history_table || !f.history_table.length) {

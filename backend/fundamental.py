@@ -35,17 +35,56 @@ def _row_val(df: pd.DataFrame, names: list[str], col_idx: int = 0) -> float | No
     return None
 
 
+def drop_empty_periods(df: pd.DataFrame | None, min_ratio: float = 0.2) -> pd.DataFrame:
+    """
+    Yahoo bazen verisi henuz dolmamis 'bos' bir donem sutunu ekler (orn. yeni biten ceyrek).
+    Dolu satir sayisi, en dolu sutunun `min_ratio` katindan az olan sutunlar atilir;
+    aksi halde 0. sutun "en guncel donem" sanilip tum hesaplar bos/eski veriye duser.
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    counts = df.notna().sum(axis=0)
+    if counts.max() == 0:
+        return pd.DataFrame()
+    keep = counts[counts >= max(1, counts.max() * min_ratio)].index
+    return df.loc[:, keep]
+
+
+# Ardisik iki ceyrek arasindaki beklenen gun farki (52-53 haftalik mali yil sapmalari dahil)
+QUARTER_GAP_DAYS = (70, 115)
+
+
 def _ttm_val(q_df: pd.DataFrame, a_df: pd.DataFrame, names: list[str]) -> float | None:
-    """4 ceyrek mevcutsa TTM toplami, yoksa son yillik deger."""
-    if q_df is not None and not q_df.empty and q_df.shape[1] >= 4:
+    """
+    Son 4 ARDISIK ceyregin toplami (TTM). Ceyrekler arasinda bosluk varsa veya 4 ceyrek
+    bulunamazsa en guncel DOLU yillik degere duser.
+    """
+    if q_df is not None and not q_df.empty:
         for name in names:
-            if name in q_df.index:
-                vals = q_df.loc[name].iloc[:4]
-                if vals.notna().sum() == 4:
-                    total = float(vals.sum())
-                    if not (math.isnan(total) or math.isinf(total)):
-                        return total
-    return _row_val(a_df, names, 0)
+            if name not in q_df.index:
+                continue
+            series = q_df.loc[name].dropna()
+            if len(series) < 4:
+                continue
+            series = series.sort_index(ascending=False).iloc[:4]
+            dates = [pd.Timestamp(d) for d in series.index]
+            gaps = [(dates[i] - dates[i + 1]).days for i in range(3)]
+            if all(QUARTER_GAP_DAYS[0] <= g <= QUARTER_GAP_DAYS[1] for g in gaps):
+                total = float(series.sum())
+                if not (math.isnan(total) or math.isinf(total)):
+                    return total
+    return _first_valid(a_df, names)
+
+
+def _first_valid(df: pd.DataFrame | None, names: list[str]) -> float | None:
+    """En guncel donemden baslayarak ilk dolu degeri dondurur (bos donem sutunlarini atlar)."""
+    if df is None or df.empty:
+        return None
+    for i in range(df.shape[1]):
+        v = _row_val(df, names, i)
+        if v is not None:
+            return v
+    return None
 
 
 def _div(a: float | None, b: float | None) -> float | None:
@@ -168,12 +207,13 @@ class _ScoreCard:
 
 def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
     info: dict[str, Any] = bundle["info"]
-    inc: pd.DataFrame = bundle["income_stmt"]
-    q_inc: pd.DataFrame = bundle["quarterly_income"]
-    bal: pd.DataFrame = bundle["balance_sheet"]
-    q_bal: pd.DataFrame = bundle["quarterly_balance"]
-    cf: pd.DataFrame = bundle["cashflow"]
-    q_cf: pd.DataFrame = bundle["quarterly_cashflow"]
+    # Bos (henuz verisi dolmamis) donem sutunlari tum tablolarda atilir
+    inc: pd.DataFrame = drop_empty_periods(bundle["income_stmt"])
+    q_inc: pd.DataFrame = drop_empty_periods(bundle["quarterly_income"])
+    bal: pd.DataFrame = drop_empty_periods(bundle["balance_sheet"])
+    q_bal: pd.DataFrame = drop_empty_periods(bundle["quarterly_balance"])
+    cf: pd.DataFrame = drop_empty_periods(bundle["cashflow"])
+    q_cf: pd.DataFrame = drop_empty_periods(bundle["quarterly_cashflow"])
 
     is_bist: bool = bundle["is_bist"]
     # Piyasa degeri ANA birimdedir (GBp ile fiyatlanan LSE hissesinde bile GBP)
@@ -729,8 +769,16 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
         },
     ]
 
+    def _period(df: pd.DataFrame | None) -> str | None:
+        d = _col_date(df, 0)
+        return pd.Timestamp(d).strftime("%Y-%m-%d") if d is not None else None
+
     return {
         "score": fund_score,
+        "data_as_of": {
+            "income_ttm_through": _period(q_inc) or _period(inc),
+            "balance_sheet": _period(bal_latest),
+        },
         "data_coverage_pct": data_coverage_pct,
         "missing_inputs": missing_inputs,
         "growth_basis": "USD" if growth_in_usd else "nominal",

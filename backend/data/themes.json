@@ -1,5 +1,5 @@
 {
-  "_aciklama": "Para akisi tema haritasi. Sadece hisse senedi kullanin (ETF yok); BIST kodlari .IS uzantili yazilir.",
+  "_aciklama": "Para akisi tema haritasi. Sadece hisse senedi kullanin (ETF yok); BIST kodlari .IS uzantili yazilir. Parantez icindeki BIST endeks kodlari, temadaki hisselerin bagli oldugu resmi sektor endekslerini gosterir; hisse eklerken endeks uyeligini borsaistanbul.com uzerinden kontrol edin.",
   "bist": {
     "Bankacılık (XBANK)": [
       "GARAN.IS",
@@ -11,7 +11,7 @@
       "TSKB.IS",
       "ALBRK.IS"
     ],
-    "Sigorta & Aracı Kurum (XSGRT)": [
+    "Sigorta & Aracı Kurum (XSGRT + XAKUR)": [
       "TURSG.IS",
       "ANSGR.IS",
       "AKGRT.IS",
@@ -45,8 +45,7 @@
       "AKSEN.IS",
       "GWIND.IS",
       "ODAS.IS",
-      "ZOREN.IS",
-      "TRENJ.IS"
+      "ZOREN.IS"
     ],
     "Enerji Teknolojisi & Ekipman": [
       "ASTOR.IS",
@@ -64,13 +63,14 @@
       "GUBRF.IS",
       "ALKIM.IS"
     ],
-    "Demir-Çelik & Altın/Maden (XMANA)": [
+    "Demir-Çelik & Altın/Maden (XMANA + XMADN)": [
       "EREGL.IS",
       "KRDMD.IS",
       "BRSAN.IS",
       "KCAER.IS",
       "TRALT.IS",
       "TRMET.IS",
+      "TRENJ.IS",
       "CVKMD.IS"
     ],
     "Holdingler (XHOLD)": [
@@ -108,7 +108,7 @@
       "ECILC.IS",
       "SELEC.IS"
     ],
-    "İnşaat, Çimento & GYO (XGMYO)": [
+    "İnşaat, Çimento & GYO": [
       "ENKAI.IS",
       "OYAKC.IS",
       "CIMSA.IS",
