@@ -699,6 +699,74 @@ html, body {
 }
 
 /* PDF / Print Stylesheet */
+
+/* --- Puan dokumu --- */
+.breakdown { display: flex; flex-direction: column; gap: 7px; }
+.bd-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 10px; align-items: center; font-size: 13px; }
+.bd-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bd-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-name .muted { font-size: 11px; margin-left: 6px; }
+.bd-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.bd-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+.bd-fill.good { background: var(--green); }
+.bd-fill.mid { background: var(--amber); }
+.bd-fill.bad { background: var(--red); }
+.bd-val { text-align: right; font-family: "JetBrains Mono", monospace; font-size: 12px; }
+.bd-row.missing .bd-name { color: var(--muted); text-decoration: line-through; }
+.bd-total { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+
+/* --- Puan gecmisi --- */
+.history-chart { width: 100%; height: 120px; }
+.history-chart svg { width: 100%; height: 100%; display: block; }
+
+/* --- Kompakt tablo & analist notu --- */
+.data-table.compact th, .data-table.compact td { padding: 5px 8px; font-size: 12px; }
+.analyst-note { font-size: 11px; margin-top: 8px; }
+#analystCard .table-wrap { max-height: 260px; overflow-y: auto; }
+#analystCard .data-table td { white-space: nowrap; }
+
+/* --- Uyarilar --- */
+.alerts-wrap { position: relative; }
+.alerts-panel {
+  position: absolute; right: 0; top: calc(100% + 6px); width: min(380px, 92vw); z-index: 50;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+.alerts-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.alerts-sub { font-size: 11px; margin: 4px 0 8px; }
+.alerts-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.alerts-list li { padding: 7px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.alerts-list li.unseen { color: var(--text); font-weight: 600; }
+.alerts-list .al-date { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+.btn-sm { padding: 3px 8px; font-size: 12px; }
+
+
+/* --- Pozisyon boyutu --- */
+.pos-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.pos-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.pos-form input, .pos-form select {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 7px 9px; font-size: 13px; min-width: 110px;
+}
+.pos-warn { margin: 0; padding-left: 18px; color: var(--amber); font-size: 13px; }
+.pos-warn li { margin-bottom: 4px; }
+
+/* --- Super tarayici --- */
+.scan-presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; }
+.scan-preset {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px;
+  padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left;
+}
+.scan-preset.active { border-color: var(--accent); color: var(--accent); }
+.scan-preset .sp-tag { display: block; font-size: 11px; margin-top: 2px; }
+.sp-tag.good { color: var(--green); }
+.sp-tag.bad { color: var(--red); }
+.sp-tag.neutral { color: var(--muted); }
+.scan-evidence { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+.scan-evidence .ev-grid { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 6px; }
+.scan-evidence .ev-grid span { white-space: nowrap; }
+#scanTable tbody tr { cursor: pointer; }
+
 @media print {
   body { background: #fff !important; color: #111827 !important; font-size: 11.5px; }
   .no-print { display: none !important; }

@@ -1,56 +1,50 @@
 from __future__ import annotations
 
-import threading
 import time
 from typing import Any
 
 import pandas as pd
 import yfinance as yf
 
-# Eski -> Yeni BIST hisse kod yonlendirmeleri (Kasim 2025 unvan degisiklikleri)
-BIST_ALIASES: dict[str, str] = {
-    "KOZAL": "TRALT",
-    "KOZAA": "TRMET",
-    "IPEKE": "TRENJ",
+from .cache import TTLCache
+from .reference_data import bist_aliases, known_bist
+from .sec_data import fetch_sec_summary
+
+# Eski -> Yeni BIST kod yonlendirmeleri ve bilinen BIST kodlari: backend/data/bist_symbols.json
+BIST_ALIASES: dict[str, str] = bist_aliases()
+KNOWN_BIST: frozenset[str] = known_bist()
+
+# Kurus / pens gibi ALT BIRIMLE fiyatlanan para birimleri: (ana birim, carpan).
+# Ornek: LSE hisseleri "GBp" (pens) ile fiyatlanir; .upper() ile "GBP" yapmak fiyati 100 kat
+# yanlis gosterir. Yahoo'nun marketCap degeri ise ANA birimdedir (GBP).
+MINOR_UNIT_CURRENCIES: dict[str, tuple[str, int]] = {
+    "GBp": ("GBP", 100),
+    "GBX": ("GBP", 100),
+    "ZAc": ("ZAR", 100),
+    "ZAC": ("ZAR", 100),
+    "ILA": ("ILS", 100),
 }
 
-# Yaygin BIST sembolleri: Otomatik modda dogrudan .IS eklenir
-KNOWN_BIST = {
-    "AEFES", "AGHOL", "AHGAZ", "AKBNK", "AKCNS", "AKFGY", "AKFYE", "AKGRT", "AKSA", "AKSEN",
-    "ALARK", "ALBRK", "ALFAS", "ALKIM", "ALTNY", "ANSGR", "ARCLK", "ARDYZ", "ASELS", "ASTOR", "ASUZU",
-    "AVPGY", "BERA", "BFREN", "BIENY", "BIMAS", "BJKAS", "BOSSA", "BRISA", "BRSAN",
-    "BRYAT", "BTCIM", "BUCIM", "CANTE", "CCOLA", "CIMSA", "CLEBI", "CVKMD", "CWENE", "DEVA",
-    "DOAS", "DOHOL", "ECILC", "ECZYT", "EGEEN", "EKGYO", "ENERY", "ENJSA", "ENKAI",
-    "EREGL", "ESEN", "EUPWR", "FENER", "FROTO", "GARAN", "GESAN", "GLYHO", "GOLTS",
-    "GOODY", "GSDHO", "GSRAY", "GUBRF", "GWIND", "HALKB", "HEDEF", "HEKTS", "HLGYO",
-    "INVEO", "ISCTR", "ISGYO", "ISMEN", "IZENR", "JANTS", "KARSN", "KCAER",
-    "KCHOL", "KLKIM", "KLRHO", "KLSER", "KMPUR", "KONTR", "KONYA", "KORDS",
-    "KRDMD", "KUTPO", "LOGO", "MAGEN", "MAVI", "MGROS", "MIATK", "MPARK",
-    "NATEN", "NTGAZ", "NTHOL", "NUHCM", "ODAS", "ONRYT", "OTKAR", "OYAKC", "PAPIL", "PARSN", "PASEU",
-    "PEKGY", "PENTA", "PETKM", "PGSUS", "PRKME", "QUAGR", "REEDR", "RYGYO", "RYSAS",
-    "SAHOL", "SARKY", "SASA", "SDTTR", "SELEC", "SISE", "SKBNK", "SMRTG", "SNGYO",
-    "SOKM", "TABGD", "TATGD", "TAVHL", "TCELL", "THYAO", "TKFEN", "TMSN", "TOASO",
-    "TRALT", "TRENJ", "TRGYO", "TRMET", "TSKB", "TSPOR", "TTKOM", "TTRAK", "TUKAS", "TUPRS", "TURSG", "ULKER",
-    "VAKBN", "VESBE", "VESTL", "VKGYO", "YEOTK", "YKBNK", "ZOREN", "ZRGYO",
-}
-
-_CACHE: dict[str, tuple[float, Any]] = {}
-_LOCK = threading.Lock()
 STOCK_TTL = 600      # 10 dakika
 MACRO_TTL = 900      # 15 dakika
 
-
-def _cache_get(key: str, ttl: int) -> Any | None:
-    with _LOCK:
-        entry = _CACHE.get(key)
-        if entry and (time.time() - entry[0]) < ttl:
-            return entry[1]
-    return None
+# Her hisse paketi 2 yillik fiyat + 6 finansal tablo icerir; sinirsiz buyumemesi icin LRU
+_STOCK_CACHE = TTLCache(max_entries=40)
+_MACRO_CACHE = TTLCache(max_entries=40)
 
 
-def _cache_set(key: str, value: Any) -> None:
-    with _LOCK:
-        _CACHE[key] = (time.time(), value)
+def normalize_currency(raw: str | None, default: str) -> tuple[str, str, int]:
+    """
+    Donus: (gosterim_birimi, ana_birim, alt_birim_carpani)
+    'GBp' -> ('GBp', 'GBP', 100);  'usd' -> ('USD', 'USD', 1)
+    """
+    if not raw:
+        return default, default, 1
+    if raw in MINOR_UNIT_CURRENCIES:
+        major, factor = MINOR_UNIT_CURRENCIES[raw]
+        return raw, major, factor
+    up = raw.upper()
+    return up, up, 1
 
 
 def _clean_history(df: pd.DataFrame) -> pd.DataFrame:
@@ -118,12 +112,12 @@ def resolve_symbol(raw_symbol: str, market: str = "auto") -> tuple[str, bool]:
 
 def fetch_macro_series(symbol: str, period: str = "2y") -> pd.DataFrame:
     key = f"macro:{symbol}:{period}"
-    cached = _cache_get(key, MACRO_TTL)
+    cached = _MACRO_CACHE.get(key, MACRO_TTL)
     if cached is not None:
         return cached
     df = _fetch_history_direct(symbol, period=period)
     if not df.empty:
-        _cache_set(key, df)
+        _MACRO_CACHE.set(key, df)
     return df
 
 
@@ -160,7 +154,7 @@ def fetch_stock_bundle(
     resolved, is_bist = resolve_symbol(raw_symbol, market)
     cache_key = f"stock:{resolved}"
     if not force_refresh:
-        cached = _cache_get(cache_key, STOCK_TTL)
+        cached = _STOCK_CACHE.get(cache_key, STOCK_TTL)
         if cached is not None:
             return cached
 
@@ -197,19 +191,39 @@ def fetch_stock_bundle(
     cashflow = _safe_df(lambda: ticker.cashflow)
     quarterly_cashflow = _safe_df(lambda: ticker.quarterly_cashflow)
 
+    # Bilanco takvimi (siradaki bilanco tarihi) — tum piyasalar
+    try:
+        calendar = ticker.calendar or {}
+        if not isinstance(calendar, dict):
+            calendar = {}
+    except Exception:
+        calendar = {}
+    # Analist not degisiklikleri ve hedef fiyatlari — yalnizca ABD / global hisseler
+    upgrades = _safe_df(lambda: ticker.upgrades_downgrades) if not is_bist else pd.DataFrame()
+    # ABD'de SEC'e rapor veren sirketler icin resmi bilanco ozeti (yabanci / BIST icin None)
+    sec = None
+    if not is_bist and "." not in resolved and not resolved.startswith("^"):
+        try:
+            sec = fetch_sec_summary(resolved)
+        except Exception:
+            sec = None
+
     benchmark_symbol = "XU100.IS" if is_bist else "^GSPC"
     benchmark_name = "BIST 100" if is_bist else "S&P 500"
     benchmark = fetch_macro_series(benchmark_symbol, period="2y")
-    usdtry = fetch_macro_series("USDTRY=X", period="2y") if is_bist else pd.DataFrame()
+    # 5 yillik kur: yillik buyumeyi donem ortalama kuruyla dolara cevirmek icin (TMS 29)
+    usdtry = fetch_macro_series("USDTRY=X", period="5y") if is_bist else pd.DataFrame()
 
-    trade_currency = (info.get("currency") or ("TRY" if is_bist else "USD")).upper()
-    fin_currency = (info.get("financialCurrency") or trade_currency).upper()
+    default_curr = "TRY" if is_bist else "USD"
+    trade_currency, trade_major, minor_factor = normalize_currency(info.get("currency"), default_curr)
+    _, fin_currency, _ = normalize_currency(info.get("financialCurrency"), trade_major)
+    # Kur hizalamasi ANA birimler uzerinden yapilir (marketCap ana birimdedir)
     fin_to_trade_fx = 1.0
-    if fin_currency != trade_currency:
-        if fin_currency == "USD" and trade_currency == "TRY" and not usdtry.empty:
+    if fin_currency != trade_major:
+        if fin_currency == "USD" and trade_major == "TRY" and not usdtry.empty:
             fin_to_trade_fx = float(usdtry["Close"].iloc[-1])
         else:
-            fx = fetch_fx_rate(fin_currency, trade_currency)
+            fx = fetch_fx_rate(fin_currency, trade_major)
             if fx and fx > 0:
                 fin_to_trade_fx = fx
 
@@ -217,7 +231,9 @@ def fetch_stock_bundle(
         "symbol": resolved,
         "display_symbol": resolved[:-3] if is_bist and resolved.endswith(".IS") else resolved,
         "is_bist": is_bist,
-        "currency": trade_currency,
+        "currency": trade_currency,            # fiyat gosterim birimi (orn. GBp)
+        "currency_major": trade_major,         # ana birim (orn. GBP) — piyasa degeri bu birimde
+        "minor_unit_factor": minor_factor,     # 100 ise fiyatlar alt birimde (pens/kurus)
         "financial_currency": fin_currency,
         "fin_to_trade_fx": fin_to_trade_fx,
         "info": info,
@@ -232,7 +248,10 @@ def fetch_stock_bundle(
         "quarterly_balance": quarterly_balance,
         "cashflow": cashflow,
         "quarterly_cashflow": quarterly_cashflow,
+        "calendar": calendar,
+        "sec": sec,
+        "upgrades_downgrades": upgrades,
         "fetched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    _cache_set(cache_key, bundle)
+    _STOCK_CACHE.set(cache_key, bundle)
     return bundle

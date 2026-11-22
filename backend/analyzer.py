@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .data_fetcher import fetch_stock_bundle
 from .fundamental import analyze_fundamental
+from .market_info import analyst_view, earnings_info, financing_risk
+from .position import stop_options
+from .reference_data import theme_of
+from . import storage
+
+log = logging.getLogger("hisse_rontgen")
 from .technical import analyze_technical
 
 
@@ -63,7 +70,9 @@ def _build_verdict(tech_score: int, fund_score: int, tech: dict[str, Any], fund:
     highlights.append(f"Weinstein Evresi: {tech['weinstein']['label']}")
     highlights.append(f"Minervini Şablonu: {min_p}/8")
     if tech["relative_strength"]["rs_score_est"] is not None:
-        highlights.append(f"Göreceli Güç (RS): ~{tech['relative_strength']['rs_score_est']}/99")
+        highlights.append(f"RS Tahmini (endekse göre): ~{tech['relative_strength']['rs_score_est']}")
+    if fund.get("data_coverage_pct") is not None and fund["data_coverage_pct"] < 100:
+        highlights.append(f"Bilanço veri kapsamı: %{fund['data_coverage_pct']}")
     if pio is not None:
         highlights.append(f"Piotroski F-Score: {pio}/{pio_av}")
     if fund["valuation"]["ev_ebitda"] is not None:
@@ -84,19 +93,47 @@ def _build_verdict(tech_score: int, fund_score: int, tech: dict[str, Any], fund:
 
 def analyze_stock(raw_symbol: str, market: str = "auto", force_refresh: bool = False, include_charts: bool = True) -> dict[str, Any]:
     bundle = fetch_stock_bundle(raw_symbol, market=market, force_refresh=force_refresh)
-    tech = analyze_technical(bundle)
-    fund = analyze_fundamental(bundle)
+    tech = analyze_technical(bundle, include_charts=include_charts)
+    peer_group = _peer_group(bundle)
+    peers = None
+    try:
+        metrics, count = storage.peer_metrics(peer_group, exclude=bundle["symbol"])
+        peers = {"group": peer_group, "count": count, "metrics": metrics}
+    except Exception as exc:  # veritabani sorunu analizi durdurmasin
+        log.warning("Sektor ici kiyas verisi okunamadi: %s", exc)
+    fund = analyze_fundamental(bundle, peers=peers)
     verdict = _build_verdict(tech["score"], fund["score"], tech, fund)
+    earnings = earnings_info(bundle)
+    financing = financing_risk(bundle, fund)
+    analysts = analyst_view(bundle, tech.get("price"))
+    if earnings.get("warning"):
+        verdict["highlights"].insert(0, f"⚠ Bilanço {earnings['days_until']} gün içinde")
+        fund["flags_warn"].insert(0, earnings["warning"])
+    for msg in financing["flags"]:
+        fund["flags_warn"].append(msg)
+    if financing["level"] == "high":
+        verdict["highlights"].append("Finansman riski: Yüksek")
 
     info = bundle["info"]
     company_name = info.get("longName") or info.get("shortName") or bundle["display_symbol"]
+
+    history: list[dict[str, Any]] = []
+    try:
+        storage.record_scores(bundle["symbol"], verdict["composite_score"], tech["score"], fund["score"],
+                              tech["weinstein"]["stage"], tech.get("price"), fund.get("data_coverage_pct"))
+        own = fund.get("peer_metrics_own") or {}
+        storage.save_snapshot(bundle["symbol"], "bist" if bundle["is_bist"] else "us", peer_group,
+                              fund["sector"], fund["industry"], own)
+        history = storage.score_history(bundle["symbol"], limit=365)
+    except Exception as exc:
+        log.warning("Puan gecmisi kaydedilemedi: %s", exc)
 
     if not include_charts:
         tech_out = {k: v for k, v in tech.items() if k != "charts"}
     else:
         tech_out = tech
 
-    return {
+    result = {
         "meta": {
             "symbol": bundle["symbol"],
             "display_symbol": bundle["display_symbol"],
@@ -104,6 +141,7 @@ def analyze_stock(raw_symbol: str, market: str = "auto", force_refresh: bool = F
             "is_bist": bundle["is_bist"],
             "market_label": "BIST" if bundle["is_bist"] else (info.get("exchange") or "ABD / Global"),
             "currency": bundle["currency"],
+            "currency_major": bundle.get("currency_major", bundle["currency"]),
             "financial_currency": bundle["financial_currency"],
             "sector": fund["sector"],
             "industry": fund["industry"],
@@ -112,16 +150,42 @@ def analyze_stock(raw_symbol: str, market: str = "auto", force_refresh: bool = F
         "verdict": verdict,
         "technical": tech_out,
         "fundamental": fund,
+        "earnings": earnings,
+        "financing": financing,
+        "analysts": analysts,
+        "score_history": history,
+        "position": {
+            "stop_options": stop_options(tech.get("price"), tech),
+            "avg_turnover_20d": tech["volatility_risk"].get("avg_turnover_20d"),
+            "lot_size": 1,  # BIST'te 1 lot = 1 pay; ABD'de tam adet
+        },
     }
+    try:
+        # Tarayici (Super Tarayici) gunluk ozet satirini buradan okur
+        storage.save_screen_row(bundle["symbol"], "bist" if bundle["is_bist"] else "us",
+                                summary_from_result(result, peer_group))
+    except Exception as exc:
+        log.warning("Tarama satiri kaydedilemedi: %s", exc)
+    return result
 
 
-def build_summary_row(raw_symbol: str, market: str = "auto") -> dict[str, Any]:
-    """Izleme listesi ve coklu kiyaslama tablosu icin hafifletilmis ozet."""
-    res = analyze_stock(raw_symbol, market=market, include_charts=False)
+def _peer_group(bundle: dict[str, Any]) -> str:
+    """Kiyas grubu: hisse bir temadaysa tema, degilse piyasa + Yahoo endustrisi."""
+    found = theme_of(bundle["symbol"])
+    if found:
+        return f"{found[0]}:{found[1]}"
+    market = "bist" if bundle["is_bist"] else "us"
+    return f"{market}:{(bundle.get('info') or {}).get('industry') or 'Bilinmiyor'}"
+
+
+def summary_from_result(res: dict[str, Any], peer_group: str | None = None) -> dict[str, Any]:
+    """Izleme listesi, coklu kiyaslama ve tarayici icin hafifletilmis ozet satiri."""
     m = res["meta"]
     v = res["verdict"]
     t = res["technical"]
     f = res["fundamental"]
+    pio = f["scores"]["piotroski"]
+    vr = t["volatility_risk"]
     return {
         "symbol": m["symbol"],
         "display_symbol": m["display_symbol"],
@@ -129,22 +193,51 @@ def build_summary_row(raw_symbol: str, market: str = "auto") -> dict[str, Any]:
         "is_bist": m["is_bist"],
         "market_label": m["market_label"],
         "currency": m["currency"],
+        "sector": m.get("sector"),
+        "theme": (peer_group or "").split(":", 1)[-1] if peer_group else None,
         "price": t["price"],
         "daily_change_pct": t["daily_change_pct"],
         "ret_1y": t["returns"]["1y"],
         "composite_score": v["composite_score"],
         "tech_score": t["score"],
         "fund_score": f["score"],
+        "fund_coverage_pct": f.get("data_coverage_pct"),
         "badge": v["badge"],
         "tone": v["tone"],
         "stage": t["weinstein"]["stage"],
         "minervini": f"{t['minervini']['passed']}/8",
+        "minervini_passed": t["minervini"]["passed"],
         "rs": t["relative_strength"]["rs_score_est"],
-        "piotroski": f"{f['scores']['piotroski']['score']}/{f['scores']['piotroski']['available']}" if f["scores"]["piotroski"]["score"] is not None else "—",
+        "rs_above_sma50": t["relative_strength"]["rs_above_sma50"],
+        "above_avwap_low": t["avwap"]["above_low"],
+        "vcp_ratio": vr["vcp_ratio"],
+        "dist_high_pct": t["range_52w"]["dist_high_pct"],
+        "piotroski": f"{pio['score']}/{pio['available']}" if pio["score"] is not None else "—",
+        "piotroski_score": pio["score"],
+        "piotroski_avail": pio["available"],
         "roic_pct": f["profitability"]["roic_pct"],
         "roe_pct": f["profitability"]["roe_pct"],
+        "ocf_to_ni": f["cash_quality"]["ocf_to_ni"],
         "pe": f["valuation"]["pe"],
         "ev_ebitda": f["valuation"]["ev_ebitda"],
         "net_debt_ebitda": f["balance_health"]["net_debt_to_ebitda"],
-        "adr20_pct": t["volatility_risk"]["adr20_pct"],
+        "net_debt": f["balance_health"]["net_debt"],
+        "peer_value_pct": _avg([f["peers"]["percentiles"].get(k) for k in ("ev_ebitda", "pe", "fcf_yield")]),
+        "peak_margin": f["cyclical"]["peak_margin"],
+        "adr20_pct": vr["adr20_pct"],
+        "next_earnings": res["earnings"]["next_date"],
+        "earnings_days": res["earnings"]["days_until"],
+        "financing_risk": res["financing"]["level"],
+        "analyst_target_mean": (res["analysts"] or {}).get("target_mean"),
+        "analyst_upside_pct": (res["analysts"] or {}).get("upside_mean_pct"),
     }
+
+
+def _avg(vals: list[float | None]) -> float | None:
+    xs = [x for x in vals if x is not None]
+    return round(sum(xs) / len(xs), 1) if xs else None
+
+
+def build_summary_row(raw_symbol: str, market: str = "auto") -> dict[str, Any]:
+    """Izleme listesi ve coklu kiyaslama tablosu icin hafifletilmis ozet."""
+    return summary_from_result(analyze_stock(raw_symbol, market=market, include_charts=False))

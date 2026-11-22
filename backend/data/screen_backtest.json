@@ -1,0 +1,240 @@
+{
+ "altin_kesisim": {
+  "us": {
+   "testable": true,
+   "tested": [
+    "Teknik ≥ 65",
+    "Haftalık akış ≥ +15"
+   ],
+   "untested": [
+    "Bilanço ≥ 65"
+   ],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 2784,
+    "mean": 12.36,
+    "median": 3.51,
+    "hit_pct": 56.2
+   },
+   "signals": 883,
+   "mean": 9.75,
+   "median": 3.39,
+   "hit_pct": 54.9,
+   "vs_month_mean": -1.37,
+   "months_with_signal": 42,
+   "verdict": "belirgin fark yok"
+  },
+  "bist": {
+   "testable": true,
+   "tested": [
+    "Teknik ≥ 65",
+    "Haftalık akış ≥ +15"
+   ],
+   "untested": [
+    "Bilanço ≥ 65"
+   ],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 3423,
+    "mean": 4.14,
+    "median": -3.92,
+    "hit_pct": 43.5
+   },
+   "signals": 986,
+   "mean": 8.17,
+   "median": -0.8,
+   "hit_pct": 48.6,
+   "vs_month_mean": 3.16,
+   "months_with_signal": 42,
+   "verdict": "endeksi ve evreni geçmiş"
+  }
+ },
+ "rs_liderleri": {
+  "us": {
+   "testable": true,
+   "tested": [
+    "RS tahmini ≥ 80",
+    "RS çizgisi 50G ort. üstünde",
+    "52H dip AVWAP üstünde"
+   ],
+   "untested": [],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 2784,
+    "mean": 12.36,
+    "median": 3.51,
+    "hit_pct": 56.2
+   },
+   "signals": 378,
+   "mean": 18.83,
+   "median": 10.46,
+   "hit_pct": 62.7,
+   "vs_month_mean": 8.4,
+   "months_with_signal": 41,
+   "verdict": "endeksi ve evreni geçmiş"
+  },
+  "bist": {
+   "testable": true,
+   "tested": [
+    "RS tahmini ≥ 80",
+    "RS çizgisi 50G ort. üstünde",
+    "52H dip AVWAP üstünde"
+   ],
+   "untested": [],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 3423,
+    "mean": 4.14,
+    "median": -3.92,
+    "hit_pct": 43.5
+   },
+   "signals": 470,
+   "mean": 12.8,
+   "median": 0.7,
+   "hit_pct": 50.9,
+   "vs_month_mean": 6.92,
+   "months_with_signal": 42,
+   "verdict": "endeksi ve evreni geçmiş"
+  }
+ },
+ "erken_rotasyon": {
+  "us": {
+   "testable": true,
+   "tested": [
+    "Aylık akış < 0",
+    "Haftalık akış ≥ +25"
+   ],
+   "untested": [
+    "Bilanço ≥ 65"
+   ],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 2784,
+    "mean": 12.36,
+    "median": 3.51,
+    "hit_pct": 56.2
+   },
+   "signals": 210,
+   "mean": 16.01,
+   "median": 3.11,
+   "hit_pct": 57.1,
+   "vs_month_mean": 3.41,
+   "months_with_signal": 37,
+   "verdict": "endeksi ve evreni geçmiş"
+  },
+  "bist": {
+   "testable": true,
+   "tested": [
+    "Aylık akış < 0",
+    "Haftalık akış ≥ +25"
+   ],
+   "untested": [
+    "Bilanço ≥ 65"
+   ],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 3423,
+    "mean": 4.14,
+    "median": -3.92,
+    "hit_pct": 43.5
+   },
+   "signals": 324,
+   "mean": 7.2,
+   "median": -2.98,
+   "hit_pct": 44.4,
+   "vs_month_mean": 3.24,
+   "months_with_signal": 41,
+   "verdict": "endeksi ve evreni geçmiş"
+  }
+ },
+ "kaliteli_ucuz": {
+  "us": {
+   "testable": false,
+   "untested": [
+    "ROIC ≥ %15",
+    "Piotroski ≥ 7",
+    "OCF / Net kâr ≥ 0.9",
+    "Net nakit veya Net borç/FAVÖK < 2",
+    "Sektör içi değerleme sırası ≥ %50",
+    "Döngüsel zirve kâr değil"
+   ],
+   "note": "Bu filtre yalnızca bilanço koşullarından oluşur; geriye dönük test edilemez."
+  },
+  "bist": {
+   "testable": false,
+   "untested": [
+    "ROIC ≥ %15",
+    "Piotroski ≥ 7",
+    "OCF / Net kâr ≥ 0.9",
+    "Net nakit veya Net borç/FAVÖK < 2",
+    "Sektör içi değerleme sırası ≥ %50",
+    "Döngüsel zirve kâr değil"
+   ],
+   "note": "Bu filtre yalnızca bilanço koşullarından oluşur; geriye dönük test edilemez."
+  }
+ },
+ "vcp_kirilim": {
+  "us": {
+   "testable": true,
+   "tested": [
+    "Minervini ≥ 7/8",
+    "VCP daralma ≤ 0.82",
+    "Zirveye en fazla %15 uzak"
+   ],
+   "untested": [],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 2784,
+    "mean": 12.36,
+    "median": 3.51,
+    "hit_pct": 56.2
+   },
+   "signals": 251,
+   "mean": 11.93,
+   "median": 6.69,
+   "hit_pct": 61.0,
+   "vs_month_mean": -0.13,
+   "months_with_signal": 32,
+   "verdict": "belirgin fark yok"
+  },
+  "bist": {
+   "testable": true,
+   "tested": [
+    "Minervini ≥ 7/8",
+    "VCP daralma ≤ 0.82",
+    "Zirveye en fazla %15 uzak"
+   ],
+   "untested": [],
+   "horizon_days": 126,
+   "baseline": {
+    "n": 3423,
+    "mean": 4.14,
+    "median": -3.92,
+    "hit_pct": 43.5
+   },
+   "signals": 225,
+   "mean": 9.56,
+   "median": 2.05,
+   "hit_pct": 54.7,
+   "vs_month_mean": 4.59,
+   "months_with_signal": 36,
+   "verdict": "endeksi ve evreni geçmiş"
+  }
+ },
+ "_meta": {
+  "us": {
+   "date": "2026-11-23",
+   "observations": 2784,
+   "symbols": 67,
+   "period": "5y",
+   "horizon_days": 126
+  },
+  "bist": {
+   "date": "2026-11-23",
+   "observations": 3423,
+   "symbols": 87,
+   "period": "5y",
+   "horizon_days": 126
+  }
+ }
+}

@@ -1,0 +1,215 @@
+{
+  "_aciklama": "Para akisi tema haritasi. Sadece hisse senedi kullanin (ETF yok); BIST kodlari .IS uzantili yazilir. Parantez icindeki BIST endeks kodlari, temadaki hisselerin bagli oldugu resmi sektor endekslerini gosterir; hisse eklerken endeks uyeligini borsaistanbul.com uzerinden kontrol edin.",
+  "bist": {
+    "Bankacılık (XBANK)": [
+      "GARAN.IS",
+      "AKBNK.IS",
+      "ISCTR.IS",
+      "YKBNK.IS",
+      "HALKB.IS",
+      "VAKBN.IS",
+      "TSKB.IS",
+      "ALBRK.IS"
+    ],
+    "Sigorta & Aracı Kurum (XSGRT + XAKUR)": [
+      "TURSG.IS",
+      "ANSGR.IS",
+      "AKGRT.IS",
+      "ISMEN.IS"
+    ],
+    "Havacılık & Lojistik (XULAS)": [
+      "THYAO.IS",
+      "PGSUS.IS",
+      "TAVHL.IS",
+      "CLEBI.IS",
+      "RYSAS.IS",
+      "PASEU.IS"
+    ],
+    "Savunma Sanayi": [
+      "ASELS.IS",
+      "ALTNY.IS",
+      "SDTTR.IS",
+      "ONRYT.IS",
+      "PAPIL.IS",
+      "OTKAR.IS"
+    ],
+    "Yazılım & Teknoloji (XUTEK)": [
+      "LOGO.IS",
+      "MIATK.IS",
+      "ARDYZ.IS",
+      "REEDR.IS",
+      "PENTA.IS"
+    ],
+    "Elektrik Üretim & Dağıtım (XELKT)": [
+      "ENJSA.IS",
+      "AKSEN.IS",
+      "GWIND.IS",
+      "ODAS.IS",
+      "ZOREN.IS"
+    ],
+    "Enerji Teknolojisi & Ekipman": [
+      "ASTOR.IS",
+      "GESAN.IS",
+      "EUPWR.IS",
+      "KONTR.IS",
+      "CWENE.IS",
+      "SMRTG.IS"
+    ],
+    "Petrokimya, Kimya & Gübre (XKMYA)": [
+      "TUPRS.IS",
+      "PETKM.IS",
+      "SASA.IS",
+      "HEKTS.IS",
+      "GUBRF.IS",
+      "ALKIM.IS"
+    ],
+    "Demir-Çelik & Altın/Maden (XMANA + XMADN)": [
+      "EREGL.IS",
+      "KRDMD.IS",
+      "BRSAN.IS",
+      "KCAER.IS",
+      "TRALT.IS",
+      "TRMET.IS",
+      "TRENJ.IS",
+      "CVKMD.IS"
+    ],
+    "Holdingler (XHOLD)": [
+      "KCHOL.IS",
+      "SAHOL.IS",
+      "ALARK.IS",
+      "DOHOL.IS",
+      "AGHOL.IS",
+      "TKFEN.IS",
+      "SISE.IS"
+    ],
+    "Otomotiv & Beyaz Eşya": [
+      "FROTO.IS",
+      "TOASO.IS",
+      "DOAS.IS",
+      "TTRAK.IS",
+      "BRISA.IS",
+      "ARCLK.IS",
+      "VESBE.IS"
+    ],
+    "Perakende, Gıda & İçecek": [
+      "BIMAS.IS",
+      "MGROS.IS",
+      "SOKM.IS",
+      "MAVI.IS",
+      "CCOLA.IS",
+      "AEFES.IS",
+      "ULKER.IS",
+      "TABGD.IS"
+    ],
+    "Telekomünikasyon (XILTM)": [
+      "TCELL.IS",
+      "TTKOM.IS"
+    ],
+    "Sağlık & İlaç": [
+      "MPARK.IS",
+      "ECILC.IS",
+      "SELEC.IS"
+    ],
+    "İnşaat, Çimento & GYO": [
+      "ENKAI.IS",
+      "OYAKC.IS",
+      "CIMSA.IS",
+      "EKGYO.IS",
+      "ISGYO.IS",
+      "TRGYO.IS"
+    ]
+  },
+  "us": {
+    "Yapay Zekâ & Yarı İletkenler": [
+      "NVDA",
+      "AMD",
+      "AVGO",
+      "TSM",
+      "MU",
+      "ASML",
+      "KLAC"
+    ],
+    "Mega-Cap Tech & Bulut/SaaS": [
+      "AAPL",
+      "MSFT",
+      "GOOGL",
+      "AMZN",
+      "META",
+      "ORCL",
+      "CRM",
+      "NOW",
+      "PLTR"
+    ],
+    "Siber Güvenlik": [
+      "CRWD",
+      "PANW",
+      "FTNT",
+      "ZS"
+    ],
+    "AI Güç Altyapısı & Nükleer": [
+      "CEG",
+      "VST",
+      "CCJ",
+      "GEV",
+      "NRG",
+      "OKLO"
+    ],
+    "Geleneksel Enerji (Petrol & Gaz)": [
+      "XOM",
+      "CVX",
+      "COP",
+      "SLB"
+    ],
+    "Bankacılık & Ödeme Sistemleri": [
+      "JPM",
+      "BAC",
+      "GS",
+      "MS",
+      "WFC",
+      "V",
+      "MA"
+    ],
+    "Kripto & Dijital Varlıklar": [
+      "COIN",
+      "MSTR",
+      "MARA",
+      "HOOD",
+      "RIOT"
+    ],
+    "Savunma & Havacılık": [
+      "LMT",
+      "RTX",
+      "NOC",
+      "GD",
+      "LHX",
+      "GE"
+    ],
+    "Elektrikli Araç, Mobilite & Uzay": [
+      "TSLA",
+      "RKLB",
+      "ASTS",
+      "UBER"
+    ],
+    "Sağlık & Biyoteknoloji": [
+      "LLY",
+      "UNH",
+      "NVO",
+      "ABBV",
+      "ISRG"
+    ],
+    "Tüketim & Perakende": [
+      "WMT",
+      "COST",
+      "HD",
+      "MCD",
+      "NKE"
+    ],
+    "Altın, Gümüş & Emtia": [
+      "NEM",
+      "AEM",
+      "WPM",
+      "PAAS",
+      "FCX"
+    ]
+  }
+}
