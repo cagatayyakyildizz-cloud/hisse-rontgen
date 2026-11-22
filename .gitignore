@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Kullaniciya ozel yerel izleme listesi (ilk acilista otomatik olusur)
+watchlist.json
+
+# Ortam / IDE
+.env
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
