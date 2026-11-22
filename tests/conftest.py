@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,15 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Testlerde arka plan zamanlayicisi calismaz
+os.environ["HISSE_SCHEDULER"] = "0"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    """Her test kendi gecici SQLite dosyasini kullanir."""
+    monkeypatch.setenv("HISSE_DB", str(tmp_path / "test.sqlite3"))
 
 
 def statement(rows: dict[str, list[float | None]], dates: list[str]) -> pd.DataFrame:

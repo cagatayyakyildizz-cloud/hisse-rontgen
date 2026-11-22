@@ -90,7 +90,10 @@ def run(symbols: list[str], market: str, horizon: int, period: str) -> list[dict
                 "benchmark_symbol": bench_sym,
             }
             try:
-                score = analyze_technical(bundle)["score"]
+                tech = analyze_technical(bundle, include_charts=False)
+                score = tech["score"]
+                comps = {c["key"]: (None if c["points"] is None else c["points"] / c["max"])
+                         for c in tech["score_breakdown"]}
             except Exception as exc:  # tek bir tarihteki veri sorunu testi durdurmasin
                 print(f"  ! {sym} {as_of.date()}: {exc}", file=sys.stderr)
                 continue
@@ -102,7 +105,7 @@ def run(symbols: list[str], market: str, horizon: int, period: str) -> list[dict
             stock_ret = (p1 / p0 - 1) * 100
             bench_ret = (float(b_window.iloc[-1]) / float(b_window.iloc[0]) - 1) * 100
             rows.append({"symbol": sym, "date": as_of, "score": score,
-                         "ret": stock_ret, "excess": stock_ret - bench_ret})
+                         "ret": stock_ret, "excess": stock_ret - bench_ret, "components": comps})
     return rows
 
 
@@ -125,12 +128,40 @@ def report(rows: list[dict], horizon: int) -> None:
           "Sinirlamalar icin dosyanin basindaki aciklamaya bakin.")
 
 
+def component_report(rows: list[dict]) -> None:
+    """
+    Her teknik kalemin (0..1 sinyal) sonraki fazla getiriyle Spearman sira korelasyonu (bilgi katsayisi, IC).
+    IC > 0: kalem ise yariyor; IC ~ 0 veya < 0: agirligi dusurulmeli.
+    Ayrica tarih bazinda (ayni ay icindeki hisseler arasi) ortalama IC verilir; piyasa yonunun etkisini azaltir.
+    """
+    if not rows:
+        return
+    df = pd.DataFrame([{**r["components"], "excess": r["excess"], "date": r["date"]} for r in rows])
+    df = df.rename(columns={"score": "_score"})
+    df["toplam_puan"] = [r["score"] for r in rows]
+    print("\nKalem bazinda bilgi katsayisi (Spearman IC, sonraki fazla getiri ile):")
+    print(f"{'Kalem':<18}{'Gözlem':>8}{'IC (havuz)':>12}{'IC (aylık ort.)':>17}")
+    for col in [c for c in df.columns if c not in ("excess", "date")]:
+        sub = df[[col, "excess", "date"]].dropna()
+        if len(sub) < 30 or sub[col].nunique() < 2:
+            continue
+        ic = sub[col].rank().corr(sub["excess"].rank())
+        monthly = []
+        for _, g in sub.groupby(sub["date"].dt.to_period("M")):
+            if len(g) >= 8 and g[col].nunique() > 1:
+                monthly.append(g[col].rank().corr(g["excess"].rank()))
+        m_ic = statistics.mean(monthly) if monthly else float("nan")
+        print(f"{col:<18}{len(sub):>8}{ic:>12.3f}{m_ic:>17.3f}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Teknik puanin geriye donuk testi")
     ap.add_argument("--market", choices=["us", "bist"], default="us")
     ap.add_argument("--symbols", help="Virgulle ayrilmis semboller (varsayilan: tema listesindeki tum hisseler)")
     ap.add_argument("--horizon", type=int, default=126, help="Ileri getiri ufku, islem gunu (varsayilan 126 ~ 6 ay)")
     ap.add_argument("--period", default="5y", help="Indirilecek veri suresi (varsayilan 5y)")
+    ap.add_argument("--components", action="store_true", help="Her teknik kalemin bilgi katsayisini da raporla")
+    ap.add_argument("--csv", help="Tum gozlemleri bu CSV dosyasina yaz")
     args = ap.parse_args()
     # Windows konsolunda (cp1254) Turkce/ozel karakterler hata vermesin
     if hasattr(sys.stdout, "reconfigure"):
@@ -141,7 +172,14 @@ def main() -> None:
     else:
         symbols = sorted({s for syms in themes(args.market).values() for s in syms})
     print(f"{len(symbols)} hisse icin veri indiriliyor…")
-    report(run(symbols, args.market, args.horizon, args.period), args.horizon)
+    rows = run(symbols, args.market, args.horizon, args.period)
+    report(rows, args.horizon)
+    if args.components:
+        component_report(rows)
+    if args.csv and rows:
+        pd.DataFrame([{**{k: v for k, v in r.items() if k != "components"}, **r["components"]} for r in rows]).to_csv(
+            args.csv, index=False)
+        print(f"\nGozlemler {args.csv} dosyasina yazildi.")
 
 
 if __name__ == "__main__":

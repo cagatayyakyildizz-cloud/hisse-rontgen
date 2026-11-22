@@ -8,6 +8,7 @@ import yfinance as yf
 
 from .cache import TTLCache
 from .reference_data import bist_aliases, known_bist
+from .sec_data import fetch_sec_summary
 
 # Eski -> Yeni BIST kod yonlendirmeleri ve bilinen BIST kodlari: backend/data/bist_symbols.json
 BIST_ALIASES: dict[str, str] = bist_aliases()
@@ -190,6 +191,23 @@ def fetch_stock_bundle(
     cashflow = _safe_df(lambda: ticker.cashflow)
     quarterly_cashflow = _safe_df(lambda: ticker.quarterly_cashflow)
 
+    # Bilanco takvimi (siradaki bilanco tarihi) — tum piyasalar
+    try:
+        calendar = ticker.calendar or {}
+        if not isinstance(calendar, dict):
+            calendar = {}
+    except Exception:
+        calendar = {}
+    # Analist not degisiklikleri ve hedef fiyatlari — yalnizca ABD / global hisseler
+    upgrades = _safe_df(lambda: ticker.upgrades_downgrades) if not is_bist else pd.DataFrame()
+    # ABD'de SEC'e rapor veren sirketler icin resmi bilanco ozeti (yabanci / BIST icin None)
+    sec = None
+    if not is_bist and "." not in resolved and not resolved.startswith("^"):
+        try:
+            sec = fetch_sec_summary(resolved)
+        except Exception:
+            sec = None
+
     benchmark_symbol = "XU100.IS" if is_bist else "^GSPC"
     benchmark_name = "BIST 100" if is_bist else "S&P 500"
     benchmark = fetch_macro_series(benchmark_symbol, period="2y")
@@ -230,6 +248,9 @@ def fetch_stock_bundle(
         "quarterly_balance": quarterly_balance,
         "cashflow": cashflow,
         "quarterly_cashflow": quarterly_cashflow,
+        "calendar": calendar,
+        "sec": sec,
+        "upgrades_downgrades": upgrades,
         "fetched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     _STOCK_CACHE.set(cache_key, bundle)

@@ -6,6 +6,36 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .scoring import ScoreCard
+
+# Teknik puan agirliklari (toplam 100). tools/backtest_teknik.py --components ciktisina gore
+# ayarlanir; degistirirseniz testi tekrar calistirip sonucu README'ye not edin.
+TECH_WEIGHTS: dict[str, float] = {
+    "minervini": 30.0,
+    "weinstein": 15.0,
+    "rs_level": 12.0,
+    "rs_trend": 3.0,
+    "avwap_low": 5.0,
+    "avwap_high_ytd": 4.0,
+    "vcp": 3.0,
+    "volume": 3.0,
+    "regime": 5.0,
+    "confirm": 5.0,
+    "rsi": 5.0,
+    "macd": 5.0,
+    "extension": 5.0,
+}
+
+# Geriye donuk test kaniti (docs/BACKTEST.md). Arayuzde puanin ne kadar guvenilir oldugunu gosterir.
+BACKTEST_EVIDENCE: dict[str, dict[str, Any]] = {
+    "bist": {"monthly_ic": 0.147, "observations": 3423, "strength": "güçlü",
+             "note": "Geriye dönük testte (5 yıl, 87 hisse) teknik puan BIST'te sonraki 6 aylık göreli getiriyi "
+                     "anlamlı biçimde sıraladı (aylık IC 0.15)."},
+    "us": {"monthly_ic": 0.031, "observations": 2784, "strength": "zayıf",
+           "note": "Geriye dönük testte (5 yıl, 67 hisse) teknik puanın ABD'de sonraki 6 aylık göreli getiriyle "
+                   "ilişkisi zayıf ve kararsız bulundu (aylık IC 0.03). Tek başına karar ölçütü olarak kullanmayın."},
+}
+
 
 def _safe(val: Any, ndigits: int = 2) -> float | None:
     if val is None:
@@ -114,7 +144,8 @@ def _build_ohlcv_chart(df: pd.DataFrame, avwap_low_idx: int, avwap_high_idx: int
     }
 
 
-def analyze_technical(bundle: dict[str, Any]) -> dict[str, Any]:
+def analyze_technical(bundle: dict[str, Any], include_charts: bool = True) -> dict[str, Any]:
+    """include_charts=False: grafik serileri uretilmez (geriye donuk test icin hizli)."""
     df: pd.DataFrame = bundle["history"]
     bench: pd.DataFrame = bundle["benchmark"]
     usdtry: pd.DataFrame = bundle["usdtry"]
@@ -362,7 +393,7 @@ def analyze_technical(bundle: dict[str, Any]) -> dict[str, Any]:
             u_win52 = df_usd.iloc[-min(252, len(df_usd)):]
             u_low_pos = int(df_usd.index.get_loc(u_win52["Low"].idxmin()))
             u_high_pos = int(df_usd.index.get_loc(u_win52["High"].idxmax()))
-            chart_usd = _build_ohlcv_chart(df_usd, u_low_pos, u_high_pos)
+            chart_usd = _build_ohlcv_chart(df_usd, u_low_pos, u_high_pos) if include_charts else None
             usd_analysis = {
                 "price_usd": _safe(u_last, 4),
                 "usdtry_last": _safe(fx_aligned.iloc[-1], 4),
@@ -374,85 +405,69 @@ def analyze_technical(bundle: dict[str, Any]) -> dict[str, Any]:
             }
 
     # --- 8. Ana Grafik Serisi ---
-    chart_primary = _build_ohlcv_chart(df, low_pos, high_pos)
+    chart_primary = _build_ohlcv_chart(df, low_pos, high_pos) if include_charts else None
 
     # --- 9. Seffaf Teknik Puanlama (0 - 100) ---
-    score = 0.0
-    # a) Minervini (30 puan)
-    score += (minervini_passed / 8.0) * 30.0
+    # Her kalem 0..1 arasi bir sinyal uretir; puan = agirlikli ortalama * 100.
+    # Agirliklar TECH_WEIGHTS'te tutulur ve tools/backtest_teknik.py sonuclarina gore ayarlanir.
+    card = ScoreCard()
+    w = TECH_WEIGHTS
+    card.add_signal("Minervini trend şablonu", minervini_passed / 8.0, w["minervini"], "minervini",
+                    f"{minervini_passed}/8")
+    card.add_signal("Weinstein evresi", {2: 1.0, 1: 8 / 15, 3: 5 / 15, 4: 0.0}.get(stage), w["weinstein"], "weinstein",
+                    stage_label)
 
-    # b) Weinstein Evre (15 puan)
-    score += {2: 15.0, 1: 8.0, 3: 5.0, 4: 0.0}.get(stage, 5.0)
-
-    # c) Goreceli Guc RS (15 puan)
     rs_est = rs_info["rs_score_est"]
+    rs_level = None
     if rs_est is not None:
-        if rs_est >= 80:
-            score += 12.0
-        elif rs_est >= 65:
-            score += 9.0
-        elif rs_est >= 50:
-            score += 6.0
-        elif rs_est >= 35:
-            score += 3.0
-        if rs_info["rs_above_sma50"]:
-            score += 3.0
-    else:
-        score += 7.0
+        rs_level = 1.0 if rs_est >= 80 else 0.75 if rs_est >= 65 else 0.5 if rs_est >= 50 else 0.25 if rs_est >= 35 else 0.0
+    card.add_signal("RS seviyesi (endekse göre)", rs_level, w["rs_level"], "rs_level",
+                    f"~{rs_est}" if rs_est is not None else None)
+    rs_trend = None if rs_info["rs_above_sma50"] is None else (1.0 if rs_info["rs_above_sma50"] else 0.0)
+    card.add_signal("RS çizgisi 50 günlük ortalamanın üstünde", rs_trend, w["rs_trend"], "rs_trend")
 
-    # d) AVWAP + Hacim / VCP (15 puan)
-    if above_avwap_low:
-        score += 5.0
-    if above_avwap_high or above_avwap_ytd:
-        score += 4.0
-    if vcp_tight:
-        score += 3.0
-    elif vcp_ratio is not None and vcp_ratio <= 1.0:
-        score += 1.5
-    if (rvol is not None and rvol >= 1.3 and daily_change_pct > 0) or (vol_dryup_ratio is not None and vol_dryup_ratio <= 0.85 and abs(daily_change_pct) < 2.0):
-        score += 3.0
-    else:
-        score += 1.5
+    card.add_signal("52H dip AVWAP üstünde", None if v_avwap_low is None else float(above_avwap_low),
+                    w["avwap_low"], "avwap_low")
+    card.add_signal("52H zirve veya yılbaşı AVWAP üstünde",
+                    None if (v_avwap_high is None and v_avwap_ytd is None) else float(above_avwap_high or above_avwap_ytd),
+                    w["avwap_high_ytd"], "avwap_high_ytd")
+    vcp_sig = None if vcp_ratio is None else (1.0 if vcp_tight else 0.5 if vcp_ratio <= 1.0 else 0.0)
+    card.add_signal("Volatilite daralması (VCP)", vcp_sig, w["vcp"], "vcp", f"{vcp_ratio}x" if vcp_ratio else None)
+    vol_ok = (rvol is not None and rvol >= 1.3 and daily_change_pct > 0) or (
+        vol_dryup_ratio is not None and vol_dryup_ratio <= 0.85 and abs(daily_change_pct) < 2.0)
+    card.add_signal("Hacim teyidi", None if rvol is None else (1.0 if vol_ok else 0.5), w["volume"], "volume")
 
-    # e) Piyasa Rejimi & USD Bazli Teyit (10 puan)
-    if bench_regime["above_sma50"] and bench_regime["above_sma200"]:
-        score += 5.0
-    elif bench_regime["above_sma200"] or bench_regime["above_sma50"]:
-        score += 2.5
-
+    regime = None
+    if bench_regime["above_sma50"] is not None:
+        both = bench_regime["above_sma50"] and bench_regime["above_sma200"]
+        one = bench_regime["above_sma50"] or bench_regime["above_sma200"]
+        regime = 1.0 if both else 0.5 if one else 0.0
+    card.add_signal(f"Piyasa rejimi ({bundle['benchmark_name']})", regime, w["regime"], "regime",
+                    bench_regime["status"])
     if is_bist and usd_analysis:
-        if usd_analysis["above_sma50_usd"] and usd_analysis["above_sma200_usd"]:
-            score += 5.0
-        elif usd_analysis["above_sma50_usd"] or usd_analysis["above_sma200_usd"]:
-            score += 2.5
+        u50, u200 = usd_analysis["above_sma50_usd"], usd_analysis["above_sma200_usd"]
+        card.add_signal("USD bazlı trend teyidi", 1.0 if (u50 and u200) else 0.5 if (u50 or u200) else 0.0,
+                        w["confirm"], "confirm")
     else:
-        # ABD hisselerinde likidite + makro rejim destegi
-        if bench_regime["above_sma200"]:
-            score += 5.0
-        else:
-            score += 2.0
+        conf = None if bench_regime["above_sma200"] is None else (1.0 if bench_regime["above_sma200"] else 0.4)
+        card.add_signal("Endeks 200 günlük ortalama üstünde", conf, w["confirm"], "confirm")
 
-    # f) Momentum, Uzama ve Risk Dengesi (15 puan)
+    rsi_sig = None
     if v_rsi is not None:
-        if 48 <= v_rsi <= 72:
-            score += 5.0
-        elif 40 <= v_rsi < 48 or 72 < v_rsi <= 78:
-            score += 3.0
-        elif v_rsi > 78:
-            score += 1.5  # asiri uzama uyarisi
-    if macd_bullish and (v_sma200 is None or last_close > v_sma200):
-        score += 5.0
-    elif macd_bullish:
-        score += 2.5
+        rsi_sig = 1.0 if 48 <= v_rsi <= 72 else 0.6 if (40 <= v_rsi < 48 or 72 < v_rsi <= 78) else 0.3 if v_rsi > 78 else 0.0
+    card.add_signal("RSI(14) sağlıklı bölgede", rsi_sig, w["rsi"], "rsi", f"{v_rsi}" if v_rsi is not None else None)
+    macd_sig = None if v_macd is None else (1.0 if (macd_bullish and (v_sma200 is None or last_close > v_sma200))
+                                            else 0.5 if macd_bullish else 0.0)
+    card.add_signal("MACD pozitif (trend filtreli)", macd_sig, w["macd"], "macd")
+    ext_sig = None
     if ext_from_sma50_pct is not None:
-        if -3.0 <= ext_from_sma50_pct <= 18.0:
-            score += 5.0
-        elif 18.0 < ext_from_sma50_pct <= 30.0:
-            score += 2.5
-        elif -10.0 <= ext_from_sma50_pct < -3.0:
-            score += 2.0
+        e = ext_from_sma50_pct
+        ext_sig = 1.0 if -3.0 <= e <= 18.0 else 0.5 if 18.0 < e <= 30.0 else 0.4 if -10.0 <= e < -3.0 else 0.0
+    card.add_signal("50 SMA'ya göre makul uzaklık", ext_sig, w["extension"], "extension",
+                    f"{ext_from_sma50_pct:+.1f}%" if ext_from_sma50_pct is not None else None)
 
-    tech_score = int(max(0, min(100, round(score))))
+    tech_score = card.score() or 0
+    tech_breakdown = card.breakdown()
 
     # Kontrol listesi (Raporumuzdaki 9 maddelik ozet kart)
     checklist = [
@@ -533,6 +548,8 @@ def analyze_technical(bundle: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "score": tech_score,
+        "score_breakdown": tech_breakdown,
+        "backtest_evidence": BACKTEST_EVIDENCE["bist" if is_bist else "us"],
         "price": _safe(last_close, 4),
         "prev_close": _safe(prev_close, 4),
         "daily_change_pct": _safe(daily_change_pct, 2),

@@ -5,6 +5,9 @@ from typing import Any
 
 import pandas as pd
 
+from .scoring import ScoreCard
+from .storage import PEER_METRICS, percentile_rank
+
 
 def _safe(val: Any, ndigits: int = 2) -> float | None:
     if val is None:
@@ -109,6 +112,21 @@ REVENUE_ROWS = ["Total Revenue", "Operating Revenue"]
 NET_INCOME_ROWS = ["Net Income", "Net Income Common Stockholders", "Net Income From Continuing Operation Net Minority Interest"]
 DA_CF_ROWS = ["Depreciation And Amortization", "Depreciation Amortization Depletion"]
 
+# Dongusel sektor anahtar kelimeleri (Yahoo sektor + endustri metninde aranir)
+CYCLICAL_INDUSTRY_KEYWORDS = (
+    "semiconductor", "steel", "chemical", "gold", "silver", "copper", "aluminum", "metals & mining",
+    "industrial metals", "oil & gas", "auto manufacturers", "auto parts", "airlines", "building materials",
+    "agricultural inputs", "paper", "lumber", "coal", "marine shipping", "computer hardware", "data storage",
+    "textile", "uranium",
+)
+# Faaliyet marji tarihsel ortalamanin bu katindan VE en az bu kadar puan yukaridaysa "zirve" sayilir
+PEAK_MARGIN_RATIO = 1.5
+PEAK_MARGIN_MIN_GAP = 0.10
+# Sektor ici kiyas icin gruptaki en az hisse sayisi
+PEER_MIN_COUNT = 5
+# Dongusel zirvede bilanco puanindan dusulen puan
+CYCLICAL_PEAK_PENALTY = 10.0
+
 # Beneish M-Score: gercek veriye dayanan en az bu kadar bilesen yoksa skor hesaplanmaz
 BENEISH_MIN_REAL_COMPONENTS = 6
 
@@ -174,38 +192,11 @@ def _ebitda_from_parts(op: float | None, da: float | None) -> float | None:
     return op + abs(da)
 
 
-class _ScoreCard:
+def analyze_fundamental(bundle: dict[str, Any], peers: dict[str, Any] | None = None) -> dict[str, Any]:
     """
-    Puanlari sadece MEVCUT verilerle hesaplar.
-    Eksik bir kalem ne puan kazandirir ne de kaybettirir; o kalemin agirligi
-    toplamdan cikarilir ve 'veri kapsami' ayrica raporlanir.
+    peers (istege bagli): {"group": ad, "count": n, "metrics": {metrik: [degerler]}} —
+    ayni tema/sektordeki hisselerin son carpan ve karlilik degerleri (storage.peer_metrics).
     """
-
-    def __init__(self) -> None:
-        self.points = 0.0
-        self.max_points = 0.0
-        self.total_weight = 0.0
-        self.missing: list[str] = []
-
-    def add(self, label: str, points: float | None, weight: float) -> None:
-        self.total_weight += weight
-        if points is None:
-            self.missing.append(label)
-            return
-        self.points += max(0.0, min(weight, points))
-        self.max_points += weight
-
-    @property
-    def coverage(self) -> float:
-        return (self.max_points / self.total_weight) if self.total_weight else 0.0
-
-    def score(self, penalty: float = 0.0) -> int | None:
-        if self.max_points <= 0:
-            return None
-        return int(max(0, min(100, round(self.points / self.max_points * 100.0 - penalty))))
-
-
-def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
     info: dict[str, Any] = bundle["info"]
     # Bos (henuz verisi dolmamis) donem sutunlari tum tablolarda atilir
     inc: pd.DataFrame = drop_empty_periods(bundle["income_stmt"])
@@ -315,6 +306,54 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
     shares_0 = _row_val(bal, ["Ordinary Shares Number", "Share Issued"], 0) or _row_val(inc, ["Diluted Average Shares", "Basic Average Shares"], 0)
     shares_1 = _row_val(bal, ["Ordinary Shares Number", "Share Issued"], 1) or _row_val(inc, ["Diluted Average Shares", "Basic Average Shares"], 1)
 
+    # --- ABD: SEC XBRL ana kaynak, Yahoo yedek -----------------------------------------------
+    sec: dict[str, Any] | None = bundle.get("sec") if fin_curr == "USD" else None
+    source_checks: list[dict[str, Any]] = []
+    data_source = "Yahoo Finance"
+    if sec:
+        yahoo_vals = {"Gelir (TTM)": rev_ttm, "Faaliyet kârı (TTM)": ebit_ttm, "Faaliyet nakit akışı (TTM)": ocf_ttm,
+                      "Nakit + kısa vadeli yatırım": cash_latest}
+        sec_debt_total = None
+        if sec.get("debt_ex_leases") is not None:
+            sec_debt_total = sec["debt_ex_leases"] + (sec.get("lease_liabilities") or 0.0)
+        yahoo_vals["Toplam borç (kiralar dahil)"] = total_debt_latest
+        sec_vals = {"Gelir (TTM)": sec.get("revenue_ttm"), "Faaliyet kârı (TTM)": sec.get("operating_income_ttm"),
+                    "Faaliyet nakit akışı (TTM)": sec.get("ocf_ttm"), "Nakit + kısa vadeli yatırım": sec.get("cash_and_st"),
+                    "Toplam borç (kiralar dahil)": sec_debt_total}
+        for label, sv in sec_vals.items():
+            yv = yahoo_vals[label]
+            diff = _pct_growth(yv, sv) if (yv is not None and sv) else None
+            source_checks.append({"item": label, "sec": _safe(sv, 0), "yahoo": _safe(yv, 0),
+                                  "diff_pct": _safe(diff, 1), "used": "SEC" if sv is not None else "Yahoo"})
+        # SEC degeri olan her kalemde SEC kullanilir
+        rev_ttm = sec.get("revenue_ttm") if sec.get("revenue_ttm") is not None else rev_ttm
+        ebit_ttm = sec.get("operating_income_ttm") if sec.get("operating_income_ttm") is not None else ebit_ttm
+        if sec.get("ocf_ttm") is not None:
+            ocf_ttm = sec["ocf_ttm"]
+        if sec.get("fcf_ttm") is not None:
+            fcf_ttm = sec["fcf_ttm"]
+        if sec.get("da_ttm") is not None:
+            da_ttm = sec["da_ttm"]
+        if sec.get("gross_profit_ttm") is not None:
+            gp_ttm = sec["gross_profit_ttm"]
+        elif rev_ttm and gp_ttm is not None and yahoo_vals["Gelir (TTM)"]:
+            # Brut kar SEC'te yoksa Yahoo marjini SEC gelirine uygula (donem uyumsuzlugunu onler)
+            gp_ttm = gp_ttm / yahoo_vals["Gelir (TTM)"] * rev_ttm
+        if sec.get("net_income_ttm") is not None:
+            ni_ttm = sec["net_income_ttm"]
+        if sec.get("interest_expense_ttm"):
+            int_exp_ttm = sec["interest_expense_ttm"]
+        ebitda_ttm = _ebitda_from_parts(ebit_ttm, da_ttm) or ebitda_ttm
+        if sec.get("cash_and_st") is not None:
+            cash_latest = sec["cash_and_st"]
+        if sec_debt_total is not None:
+            total_debt_latest = sec_debt_total
+            lease_latest = sec.get("lease_liabilities")
+            debt_assumed_zero = False
+        if total_debt_latest is not None and cash_latest is not None:
+            net_debt_latest = total_debt_latest - cash_latest
+        data_source = "SEC EDGAR (Yahoo yedek)"
+
     # Firma Degeri (EV) — finansal tablo para biriminde tutarli hesap
     ev_fin = None
     if mcap_fin is not None:
@@ -396,7 +435,7 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
 
     # --- 5. Degerleme Carpanlari (Para Birimi Tutarli!) ---
     pe = _div(mcap_fin, ni_ttm) if (ni_ttm and ni_ttm > 0) else None
-    if pe is None and not currency_adjusted:
+    if pe is None and not currency_adjusted and not (ni_ttm is not None and ni_ttm <= 0):
         pe = info.get("trailingPE")
     forward_pe = info.get("forwardPE") if not currency_adjusted else None
     pb = _div(mcap_fin, equity_latest) if (equity_latest and equity_latest > 0) else None
@@ -404,7 +443,9 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
         pb = info.get("priceToBook")
     ev_ebitda = _div(ev_fin, ebitda_ttm) if (ev_fin and ebitda_ttm and ebitda_ttm > 0) else None
     if ev_ebitda is None and not currency_adjusted:
-        ev_ebitda = info.get("enterpriseToEbitda")
+        fallback = _safe(info.get("enterpriseToEbitda"), 4)
+        # Negatif FAVOK'ta carpan anlamsizdir; Yahoo'nun negatif degerini kullanma
+        ev_ebitda = fallback if (fallback is not None and fallback > 0 and (ebitda_ttm is None or ebitda_ttm > 0)) else None
     ev_sales = _div(ev_fin, rev_ttm) if (ev_fin and rev_ttm and rev_ttm > 0) else None
     graham_product = (pe * pb) if (pe and pb and pe > 0 and pb > 0) else None
 
@@ -551,10 +592,55 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
                 }
             )
 
+    # --- 9b. Dongusellik & Zirve Kar Kontrolu ---
+    # Dongusel sektorlerde (bellek, celik, kimya, madencilik...) marjlar zirvedeyken F/K dusuk
+    # gorunur ve sistem "ucuz + kaliteli" diye odullendirir. Bu klasik zirve isaretidir.
+    hist_margins: list[float] = []
+    if inc is not None and not inc.empty:
+        for i in range(min(5, inc.shape[1])):
+            r_i = _row_val(inc, REVENUE_ROWS, i)
+            e_i = _row_val(inc, OPERATING_INCOME_ROWS, i)
+            if r_i and r_i > 0 and e_i is not None:
+                hist_margins.append(e_i / r_i)
+    is_cyclical = any(k in sec_low for k in CYCLICAL_INDUSTRY_KEYWORDS)
+    avg_margin = (sum(hist_margins) / len(hist_margins)) if len(hist_margins) >= 3 else None
+    peak_margin = bool(
+        ebit_margin is not None and avg_margin is not None and avg_margin > 0
+        and ebit_margin >= avg_margin * PEAK_MARGIN_RATIO and (ebit_margin - avg_margin) >= PEAK_MARGIN_MIN_GAP
+    )
+    # Dongusel + zirve marj: degerlemeyi "normal" (tarihsel ortalama) marja gore duzelt
+    norm_factor = (avg_margin / ebit_margin) if (peak_margin and is_cyclical and ebit_margin) else None
+    eff_ev_ebitda = (ev_ebitda / norm_factor) if (norm_factor and ev_ebitda) else ev_ebitda
+    eff_pe = (pe / norm_factor) if (norm_factor and pe) else pe
+    cyclical = {
+        "is_cyclical_industry": is_cyclical,
+        "current_ebit_margin_pct": _safe(ebit_margin * 100, 1) if ebit_margin is not None else None,
+        "avg_ebit_margin_pct": _safe(avg_margin * 100, 1) if avg_margin is not None else None,
+        "years_in_average": len(hist_margins),
+        "peak_margin": peak_margin,
+        "normalized_pe": _safe(eff_pe, 2) if norm_factor else None,
+        "normalized_ev_ebitda": _safe(eff_ev_ebitda, 2) if norm_factor else None,
+    }
+
+    # --- 9c. Sektor / tema ici kiyaslama ---
+    own_metrics = {
+        "ev_ebitda": ev_ebitda, "pe": pe, "fcf_yield": fcf_yield, "roic": roic,
+        "ebit_margin": ebit_margin, "rev_growth": rev_growth_yoy,
+    }
+    peer_pct: dict[str, float | None] = {}
+    use_peers = bool(peers and peers.get("count", 0) >= PEER_MIN_COUNT and not is_financial)
+    if use_peers:
+        for k, better in PEER_METRICS.items():
+            peer_pct[k] = percentile_rank(own_metrics.get(k), peers["metrics"].get(k, []), better)
+
+    def _relative(keys: list[str]) -> float | None:
+        vals = [peer_pct[k] for k in keys if peer_pct.get(k) is not None]
+        return sum(vals) / len(vals) if vals else None
+
     # --- 10. Seffaf Bilanco Puani (0 - 100) ---
     # Her kalem (etiket, puan, agirlik) olarak eklenir. Puan None ise kalem "eksik veri"
     # sayilir: puan kazandirmaz, kaybettirmez; skor mevcut kalemlerin agirligina gore olceklenir.
-    card = _ScoreCard()
+    card = ScoreCard()
     loss_making = ni_ttm is not None and ni_ttm <= 0
 
     def _tier(val: float | None, tiers: list[tuple[float, float]], floor: float = 0.0) -> float | None:
@@ -598,12 +684,17 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
         eff = roic if roic is not None else (roce if roce is not None else roe)
         card.add("Sermaye getirisi (ROIC/ROCE/ROE)", _tier(eff, [(0.20, 15), (0.14, 12), (0.09, 8), (1e-9, 4)]), 15)
         if ebit_margin is not None:
-            margin_pts = _tier(ebit_margin, [(0.18, 10), (0.10, 7), (0.04, 4)])
+            scored_margin = avg_margin if (peak_margin and is_cyclical) else ebit_margin
+            margin_pts = _tier(scored_margin, [(0.18, 10), (0.10, 7), (0.04, 4)])
         elif gross_margin is not None:
             margin_pts = 6.0 if gross_margin >= 0.30 else 0.0
         else:
             margin_pts = None
-        card.add("Faaliyet marjı", margin_pts, 10)
+        rel_margin = _relative(["ebit_margin"]) if use_peers else None
+        if rel_margin is not None and margin_pts is not None:
+            # Mutlak esik ile sektor ici siranin ortalamasi (ikisi de 0-10)
+            margin_pts = 0.5 * margin_pts + 0.5 * rel_margin * 10
+        card.add("Faaliyet marjı" + (" (sektör içi kıyaslı)" if rel_margin is not None else ""), margin_pts, 10)
 
         # b) Nakit Kalitesi (20)
         card.add("Pozitif faaliyet nakit akışı", (7.0 if ocf_ttm > 0 else 0.0) if ocf_ttm is not None else None, 7)
@@ -616,7 +707,8 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
 
         # c) Bilanco Saglamligi (20)
         if net_debt_latest is not None and net_debt_latest < 0:
-            nd_pts = 10.0  # Net nakit
+            # Net nakit; ama FAVOK negatifse nakit eriyor demektir (nakit omru ayrica degerlendirilir)
+            nd_pts = 10.0 if (ebitda_ttm is None or ebitda_ttm > 0) else 5.0
         elif net_debt_to_ebitda is not None:
             nd_pts = _tier_low(net_debt_to_ebitda, [(1.5, 8), (2.8, 5), (4.0, 2)])
         elif net_debt_latest is not None and ebitda_ttm is not None and ebitda_ttm <= 0:
@@ -645,23 +737,30 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
 
         # e) Degerleme (15) — mevcut carpanlarin ortalamasi
         val_scores: list[float] = []
-        if ev_ebitda is not None and ev_ebitda > 0:
-            val_scores.append(_tier_low(ev_ebitda, [(10, 15), (16, 11), (24, 7)], floor=3))
+        if eff_ev_ebitda is not None and eff_ev_ebitda > 0:
+            val_scores.append(_tier_low(eff_ev_ebitda, [(10, 15), (16, 11), (24, 7)], floor=3))
         if fcf_yield is not None:
             val_scores.append(_tier(fcf_yield, [(0.06, 15), (0.035, 11), (1e-9, 6)], floor=1))
-        if pe is not None and pe > 0:
-            val_scores.append(_tier_low(pe, [(15, 15), (24, 11), (35, 7)], floor=3))
+        if eff_pe is not None and eff_pe > 0:
+            val_scores.append(_tier_low(eff_pe, [(15, 15), (24, 11), (35, 7)], floor=3))
         if val_scores:
             val_pts = sum(val_scores) / len(val_scores)
         else:
             val_pts = 0.0 if loss_making else None
-        card.add("Değerleme", val_pts, 15)
+        rel_val = _relative(["ev_ebitda", "pe", "fcf_yield"]) if use_peers else None
+        if rel_val is not None and val_pts is not None and not (peak_margin and is_cyclical):
+            # Sabit esikler yazilimi hep "pahali", sanayiyi hep "ucuz" gosterir; sektor ici sirayla dengele
+            val_pts = 0.5 * val_pts + 0.5 * rel_val * 15
+        card.add("Değerleme" + (" (sektör içi kıyaslı)" if rel_val is not None else ""), val_pts, 15)
 
     # Kirmizi bayrak kesintisi: sadece Altman. Beneish M-Score yuksek buyumede yanlis alarm
     # verebildigi icin puandan dusulmez, yalnizca uyari olarak gosterilir.
     penalty = 0.0
     if not is_financial and altman["applicable"] and altman["score"] is not None and altman["score"] < 1.81:
         penalty += 6.0
+    # Dongusel sektorde zirve marj: kalite kalemleri (ROIC, nakit) de zirve kardan sisiyor
+    if peak_margin and is_cyclical:
+        penalty += CYCLICAL_PEAK_PENALTY
 
     scored = card.score(penalty)
     fund_score = scored if scored is not None else 0
@@ -680,6 +779,19 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
             notes.append("Büyüme oranları enflasyon etkisini dışlamak için dolar bazında hesaplanır; dönem kur verisi bulunamadığından büyüme puanlamaya dahil edilmedi.")
         else:
             notes.append("Büyüme oranları enflasyon etkisini dışlamak için dönem ortalama USD/TRY kuruyla dolar bazında hesaplandı (nominal TL büyümesi değildir).")
+    if sec:
+        notes.append(f"Bilanço verisi SEC EDGAR resmi dosyalarından alındı (bilanço tarihi {sec.get('balance_date')}); Yahoo yalnızca eksik kalemlerde kullanıldı.")
+        big = [c for c in source_checks if c["diff_pct"] is not None and abs(c["diff_pct"]) > 5]
+        if big:
+            notes.append("Yahoo ile SEC arasında %5'ten büyük fark: " + ", ".join(
+                f"{c['item']} ({c['diff_pct']:+.1f}%)" for c in big) + ". SEC değerleri kullanıldı.")
+    if peak_margin:
+        msg = (f"Zirve kâr riski: faaliyet marjı %{_safe(ebit_margin * 100, 1)}, son {len(hist_margins)} yıl ortalaması "
+               f"%{_safe(avg_margin * 100, 1)}.")
+        if is_cyclical:
+            msg += (f" Döngüsel sektör: düşük F/K zirve kârdan kaynaklanıyor olabilir; puan ortalama marjla "
+                    f"normalize edildi (normalize F/K: {_safe(eff_pe, 1) if eff_pe else '—'}).")
+        flags_warn.append(msg)
     if debt_assumed_zero:
         notes.append("Bilançoda finansal borç kalemi bulunmadığından şirket borçsuz kabul edildi.")
     if lease_latest:
@@ -780,6 +892,21 @@ def analyze_fundamental(bundle: dict[str, Any]) -> dict[str, Any]:
             "balance_sheet": _period(bal_latest),
         },
         "data_coverage_pct": data_coverage_pct,
+        "data_source": data_source,
+        "cyclical": cyclical,
+        "peers": {
+            "group": (peers or {}).get("group"),
+            "count": (peers or {}).get("count", 0),
+            "used": use_peers,
+            "percentiles": {k: (None if v is None else round(v * 100)) for k, v in peer_pct.items()},
+            "min_count": PEER_MIN_COUNT,
+        },
+        "peer_metrics_own": {k: (None if v is None else round(float(v), 4)) for k, v in own_metrics.items()},
+        "source_checks": source_checks,
+        "sec": sec,
+        "revenue_ttm": _safe(rev_ttm, 0),
+        "score_breakdown": card.breakdown(),
+        "score_penalty": penalty,
         "missing_inputs": missing_inputs,
         "growth_basis": "USD" if growth_in_usd else "nominal",
         "sector": sector,

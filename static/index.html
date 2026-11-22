@@ -53,6 +53,19 @@
         <button type="button" class="btn btn-ghost" id="printBtn" title="PDF olarak kaydet veya yazdır" disabled>
           PDF / Yazdır
         </button>
+        <div class="alerts-wrap no-print">
+          <button type="button" class="btn btn-ghost" id="alertsBtn" title="İzleme listesi uyarıları">
+            🔔 Uyarılar <span class="badge-count hidden" id="alertsCount">0</span>
+          </button>
+          <div class="alerts-panel hidden" id="alertsPanel">
+            <div class="alerts-head">
+              <strong>İzleme Listesi Uyarıları</strong>
+              <button type="button" class="btn btn-ghost btn-sm" id="alertsCheckBtn">Şimdi kontrol et</button>
+            </div>
+            <div class="muted alerts-sub">Evre değişimi, ±15 puan değişim ve 7 gün içindeki bilançolar. Sunucu açıkken 30 dakikada bir kontrol edilir.</div>
+            <ul id="alertsList" class="alerts-list"></ul>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -188,6 +201,42 @@
         <div id="specialNotes" class="notes-bar hidden"></div>
       </div>
 
+      <!-- Analist Gorusu, Bilanco & Finansman Riski -->
+      <div class="grid-2">
+        <div class="card" id="analystCard">
+          <h3 class="card-title">Analist Hedef Fiyatları <span class="muted" style="font-size:12px">(ABD)</span></h3>
+          <div class="kv-list" id="analystBox"></div>
+          <div class="table-wrap" style="margin-top:10px">
+            <table class="data-table compact">
+              <thead><tr><th>Tarih</th><th>Kurum</th><th>Not</th><th class="num">Hedef</th></tr></thead>
+              <tbody id="analystActionsBody"></tbody>
+            </table>
+          </div>
+          <div class="muted analyst-note" id="analystNote"></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Bilanço Takvimi &amp; Finansman Riski</h3>
+          <div class="kv-list" id="riskBox"></div>
+        </div>
+      </div>
+
+      <!-- Puan Dokumu & Puan Gecmisi -->
+      <div class="grid-3">
+        <div class="card">
+          <h3 class="card-title">Teknik Puan Dökümü</h3>
+          <div class="breakdown" id="techBreakdown"></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Bilanço Puanı Dökümü</h3>
+          <div class="breakdown" id="fundBreakdown"></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Puan Geçmişi</h3>
+          <div id="historyChart" class="history-chart"></div>
+          <div class="muted" id="historyNote" style="font-size:12px;margin-top:6px"></div>
+        </div>
+      </div>
+
       <!-- Etkilesimli Mum Grafigi -->
       <div class="card chart-card">
         <div class="card-header">
@@ -302,6 +351,26 @@
         </div>
       </div>
 
+      <!-- Veri Kaynagi Kontrolu & Sektor Ici Konum -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header-inline">
+            <h3 class="card-title">Veri Kaynağı Kontrolü</h3>
+            <span class="muted mono" id="dataSourceLbl">—</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table compact">
+              <thead><tr><th>Kalem</th><th class="num">SEC</th><th class="num">Yahoo</th><th class="num">Fark</th></tr></thead>
+              <tbody id="sourceCheckBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Sektör İçi Konum &amp; Döngüsellik</h3>
+          <div class="kv-list" id="peerBox"></div>
+        </div>
+      </div>
+
       <!-- Cok Yilli Finansal Tablo -->
       <div class="card">
         <div class="card-header-inline">
@@ -328,7 +397,7 @@
       </div>
 
       <footer class="disclaimer">
-        <strong>Yasal Uyarı:</strong> Bu ekranda yer alan tüm puanlar, grafikler ve finansal rasyolar Yahoo Finance kamusal verileri
+        <strong>Yasal Uyarı:</strong> Bu ekranda yer alan tüm puanlar, grafikler ve finansal rasyolar Yahoo Finance ve (ABD şirketleri için) SEC EDGAR kamusal verileri
         üzerinden matematiksel modellerle üretilmektedir; eğitim ve analiz amaçlıdır, yatırım tavsiyesi değildir.
       </footer>
     </section>
@@ -500,6 +569,8 @@
                 <th class="num" data-sort="roic_pct">ROIC</th>
                 <th class="num" data-sort="ev_ebitda">FD/FAVÖK</th>
                 <th class="num" data-sort="pe">F/K</th>
+                <th class="num" data-sort="earnings_days" title="Sıradaki bilançoya kalan gün">Bilanço Günü</th>
+                <th class="num" data-sort="analyst_upside_pct">Hedef ↑</th>
                 <th>Karar</th>
                 <th class="no-print"></th>
               </tr>

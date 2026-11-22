@@ -19,6 +19,10 @@ US_THEMES: dict[str, list[str]] = load_themes("us")
 # cikma vb.) hisse bayat veri sayilir ve akis hesabina katilmaz
 MAX_STALE_DAYS = 4
 
+# Likidite filtresi: 20 gunluk ortalama islem hacmi bu esigin altindaki hisseler akis hesabina
+# katilmaz (cok sig hisselerde birkac emir skoru bozar). Para birimi piyasanin kendi birimidir.
+MIN_AVG_TURNOVER = {"bist": 25_000_000.0, "us": 20_000_000.0}
+
 WINDOWS = {
     "1d": 1,
     "1w": 5,
@@ -211,6 +215,7 @@ def compute_money_flow(market: str = "bist", force_refresh: bool = False) -> dic
     bench_last = bench_df.index[-1] if not bench_df.empty else None
     stale_symbols: list[str] = []
     missing_symbols: list[str] = []
+    illiquid_symbols: list[str] = []
 
     for sym, theme_name in sym_to_theme.items():
         df = _extract_ticker_df(raw, sym)
@@ -220,6 +225,10 @@ def compute_money_flow(market: str = "bist", force_refresh: bool = False) -> dic
         if bench_last is not None and (bench_last - df.index[-1]).days > MAX_STALE_DAYS:
             # Endeksle ayni gunun verisi yoksa getiriler endeksle kiyaslanamaz
             stale_symbols.append(sym)
+            continue
+        turnover20 = float((df["Close"] * df["Volume"].fillna(0)).iloc[-min(20, len(df)):].mean())
+        if turnover20 < MIN_AVG_TURNOVER[mkt]:
+            illiquid_symbols.append(sym)
             continue
         last_close = _safe(df["Close"].iloc[-1], 2)
         avg_turnover_20d = _safe(float((df["Close"] * df["Volume"].fillna(0)).iloc[-min(20, len(df)):].mean()), 0)
@@ -273,7 +282,10 @@ def compute_money_flow(market: str = "bist", force_refresh: bool = False) -> dic
                 }
                 continue
 
-            avg_score = int(round(sum(m["periods"][wk]["flow_score"] for m in valid) / len(valid)))
+            # Tema skoru islem hacmiyle agirliklandirilir: buyuk ve likit hisselerin akisi daha cok sayar.
+            # Tek bir dev hissenin temayi tamamen domine etmemesi icin agirliklar karekokle yumusatilir.
+            weights = [math.sqrt(max(m["avg_turnover_20d"] or 0.0, 0.0)) or 1.0 for m in valid]
+            avg_score = int(round(sum(w * m["periods"][wk]["flow_score"] for w, m in zip(weights, valid)) / sum(weights)))
             avg_ret = _safe(sum(m["periods"][wk]["ret_pct"] for m in valid) / len(valid), 2)
             avg_rs = _safe(sum((m["periods"][wk]["rs_pct"] or 0) for m in valid) / len(valid), 2)
             avg_rvol = _safe(sum((m["periods"][wk]["rvol"] or 1) for m in valid) / len(valid), 2)
@@ -354,7 +366,8 @@ def compute_money_flow(market: str = "bist", force_refresh: bool = False) -> dic
         "last_date": last_date,
         "fetched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "breadth": breadth,
-        "excluded": {"stale": stale_symbols, "missing": missing_symbols},
+        "excluded": {"stale": stale_symbols, "missing": missing_symbols, "illiquid": illiquid_symbols},
+        "min_avg_turnover": MIN_AVG_TURNOVER[mkt],
         "note": "Para akışı; fiyat, hacim ve gün içi kapanış konumundan (Chaikin) TAHMİN edilir. Gerçek takas / aracı kurum (AKD) verisi değildir.",
         "themes": themes_list,
         "stocks": stocks_list,

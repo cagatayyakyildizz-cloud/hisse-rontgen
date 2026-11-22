@@ -5,6 +5,7 @@ import os
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import scheduler, storage
 from .analyzer import analyze_stock, build_summary_row
 from .data_fetcher import resolve_symbol
 from .money_flow import compute_money_flow
@@ -69,7 +71,18 @@ def _save_watchlist(items: list[dict[str, str]]) -> None:
         raise
 
 
-app = FastAPI(title="HisseRöntgen — Tekno-Temel Hisse Analiz Platformu", version="1.0.0")
+# Son analiz sonucunun diskten sunulma suresi (sunucu yeniden baslasa da tekrar indirilmez)
+ANALYSIS_CACHE_TTL = 600
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    scheduler.start(_load_watchlist, lambda s, m: build_summary_row(s, m), analyze_stock)
+    yield
+    scheduler.stop()
+
+
+app = FastAPI(title="HisseRöntgen — Tekno-Temel Hisse Analiz Platformu", version="1.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -93,8 +106,21 @@ def api_analyze(
     market: str = Query("auto", pattern="^(auto|bist|us)$"),
     refresh: bool = Query(False),
 ) -> dict[str, Any]:
+    cache_key = f"analyze:{symbol.upper()}:{market}"
+    if not refresh:
+        try:
+            cached = storage.cache_get(cache_key, ANALYSIS_CACHE_TTL)
+        except Exception:
+            cached = None
+        if cached:
+            return cached
     try:
-        return analyze_stock(symbol, market=market, force_refresh=refresh, include_charts=True)
+        result = analyze_stock(symbol, market=market, force_refresh=refresh, include_charts=True)
+        try:
+            storage.cache_set(cache_key, result)
+        except Exception:
+            pass
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -170,3 +196,38 @@ def api_compare(req: CompareRequest) -> dict[str, Any]:
     for idx in sorted(ordered_results):
         rows.append(ordered_results[idx])
     return {"rows": rows, "errors": errors, "skipped": skipped, "limit": MAX_COMPARE}
+
+
+@app.get("/api/history/{symbol}")
+def api_history(symbol: str = FastAPIPath(..., pattern=SYMBOL_PATTERN), limit: int = Query(365, ge=1, le=2000)) -> dict[str, Any]:
+    return {"symbol": symbol.upper(), "history": storage.score_history(symbol, limit=limit)}
+
+
+@app.get("/api/alerts")
+def api_alerts(unseen: bool = Query(False), limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+    items = storage.list_alerts(limit=limit, unseen_only=unseen)
+    return {"items": items, "unseen": sum(1 for a in items if not a["seen"])}
+
+
+@app.post("/api/alerts/seen")
+def api_alerts_seen() -> dict[str, Any]:
+    return {"updated": storage.mark_alerts_seen()}
+
+
+@app.post("/api/alerts/check")
+def api_alerts_check() -> dict[str, Any]:
+    """Uyari kontrolunu hemen calistirir (normalde arka planda 30 dakikada bir)."""
+    added = scheduler.check_watchlist(_load_watchlist, lambda s, m: build_summary_row(s, m))
+    return {"added": added, "items": storage.list_alerts(limit=50)}
+
+
+@app.post("/api/peers/refresh")
+def api_peers_refresh(market: str = Query("us", pattern="^(bist|us)$")) -> dict[str, Any]:
+    """Sektor ici kiyas verisini arka planda yeniler (uzun surer; durum /api/scheduler'da)."""
+    threading.Thread(target=scheduler.refresh_peers, args=(analyze_stock, market), daemon=True).start()
+    return {"started": True, "market": market}
+
+
+@app.get("/api/scheduler")
+def api_scheduler() -> dict[str, Any]:
+    return scheduler.status()

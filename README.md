@@ -29,7 +29,7 @@
   - **Sektör & TMS 29 Farkındalığı:** Banka/Finans şirketlerinde `ROE` ve `PD/DD` odaklı puanlama; BIST hisselerinde TMS 29 farkındalığı (büyüme oranları enflasyonu dışlamak için dönem ortalama USD/TRY kuruyla **dolar bazında** ölçülür); `KOZAL → TRALT`, `KOZAA → TRMET`, `IPEKE → TRENJ` otomatik kod yönlendirmesi.
 
 ### 2. Para Akışı & Tema Rotasyonu (Günlük / Haftalık / Aylık / 3 Aylık)
-- **14 BIST Teması** (87 likit hisse) ve **12 ABD / Global Teması** (67 lider hisse; ETF yok, sadece hisse senedi).
+- **15 BIST Teması** (87 hisse) ve **12 ABD / Global Teması** (67 lider hisse; ETF yok, sadece hisse senedi). Ortalama günlük işlem hacmi eşiğin altındaki sığ hisseler akış hesabından çıkarılır; tema skoru işlem hacmiyle ağırlıklandırılır.
 - Her tema ve hisse için **1G · 1H · 1A · 3A** bazında **Para Akışı Skoru (`-100`..`+100`)**, **Chaikin Money Flow (CMF)** alım/satım baskısı, **RVOL**, **RS Farkı** ve **Rotasyon Etiketleri** (*Rotasyon Başlangıcı*, *Erken Para Girişi*, *Ana Lider Tema*, *Kâr Satışı / Çıkış*).
 - Çift yönlü tema akış çubukları, 4 dönemlik ısı haritası, **Top 10 Giriş / Çıkış** tabloları ve tek tıkla hissenin tam Tekno-Temel analizine geçiş.
 
@@ -37,7 +37,18 @@
 - Kendi BIST + ABD izleme listeni oluştur, tüm hisseleri paralel tarayıp sıralanabilir tabloda kıyasla.
 - Yazdırmaya özel açık renkli şablonla tek tıkla **PDF / Yazdır** dışa aktarımı.
 
-### 4. Şeffaf Puanlama
+### 4. Analist Hedefleri, Riskler ve Uyarılar
+- **ABD hisseleri için analist hedef fiyatları:** konsensüs, ortalama/medyan/en yüksek/en düşük hedef ve potansiyel getiri; son 6 ayda not veya hedef değiştiren kurumların listesi. (Aracı kurum tahminleridir; uygulamanın önerisi değildir.)
+- **Bilanço takvimi:** sıradaki bilanço tarihi; 7 gün içindeyse uyarı.
+- **Finansman riski:** zarar eden şirketlerde nakit ömrü (ay), pay sayısı artışı (seyrelme), hisse bazlı ödeme yükü, 24 ay içinde vadesi gelen borç.
+- **Döngüsel sektörler:** faaliyet marjı tarihsel ortalamanın çok üstündeyse "zirve kâr riski" uyarısı; değerleme ortalama marjla normalize edilir.
+- **Sektör içi kıyas:** değerleme ve marj, aynı tema/sektördeki hisselerin yüzdelik sırasıyla dengelenir (arka plan görevi günde bir kez kıyas verisini toplar).
+- **Puan geçmişi:** her analiz günlük olarak yerel veritabanına (`.cache/hisse_rontgen.sqlite3`) kaydedilir.
+- **İzleme listesi uyarıları:** evre değişimi, ±15 puan değişimi ve yaklaşan bilanço; sunucu açıkken 30 dakikada bir kontrol edilir (🔔 Uyarılar).
+
+### 5. Şeffaf Puanlama
+- Her puanın **kalem kalem dökümü** gösterilir (ör. "ROIC: 15/15, Değerleme: 7/15").
+- **ABD bilançosu SEC EDGAR'dan** (resmi XBRL verisi) alınır; Yahoo yalnızca yedek kaynaktır ve iki kaynak %5'ten fazla farklıysa uyarı gösterilir. SEC istekleri için `SEC_USER_AGENT` ortam değişkeniyle kendi uygulama adınızı ve e-postanızı verebilirsiniz.
 - Bilanço puanı **yalnızca mevcut verilerle** hesaplanır: eksik bir kalem puan kazandırmaz ya da kaybettirmez; puanın yanında **veri kapsamı (%)** ve eksik kalemler gösterilir.
 - **Beneish M-Score** bilgi amaçlıdır, puandan düşülmez (yüksek satış büyümesi skoru tek başına eşiğin üzerine taşıyabilir). En az 6/8 bileşen gerçek veriye dayanmıyorsa hesaplanmaz.
 - **RS Tahmini**, IBD'nin yüzdelik RS sıralaması değildir; hissenin endekse göre ağırlıklı fazla getirisinden türetilir.
@@ -86,6 +97,8 @@ python tools/backtest_teknik.py --market us
 python tools/backtest_teknik.py --market bist --horizon 63
 ```
 
+Kalem bazında bilgi katsayısı ve örneklem dışı kalibrasyon için `--components --csv` ve `tools/kalibrasyon.py`. Son sonuçlar ve ağırlıkların neden değiştirilmediği: [docs/BACKTEST.md](docs/BACKTEST.md). Özetle: teknik puan BIST'te anlamlı (aylık IC 0.15), ABD'de zayıf (0.03).
+
 > Yalnızca teknik puan test edilebilir (Yahoo geçmişe dönük bilanço vermez). Tema listeleri bugünkü hisselerden oluştuğu için hayatta kalma yanlılığı vardır; sonuçları kesin kanıt olarak değil, eşikleri sorgulamak için kullanın.
 
 ## Referans Verilerini Güncelleme
@@ -106,13 +119,20 @@ hisse-rontgen/
 │   ├── technical.py     # Minervini, Weinstein, RS, AVWAP, VCP, ATR/ADR, USD grafik
 │   ├── fundamental.py   # Piotroski, Altman, Beneish, ROIC, FCF, değerleme
 │   ├── analyzer.py      # Tekno-Temel bileşik skor ve 4-kadran karar motoru
-│   ├── money_flow.py    # 14 BIST + 12 ABD teması para akışı & rotasyon motoru
+│   ├── money_flow.py    # 15 BIST + 12 ABD teması para akışı & rotasyon motoru
 │   ├── cache.py         # Boyut sınırlı (LRU) ve süreli önbellek
 │   ├── reference_data.py# JSON referans verilerini yükler
+│   ├── scoring.py       # Ortak puan kartı (kalem dökümü, veri kapsamı)
+│   ├── sec_data.py      # SEC EDGAR XBRL bilanço özeti (ABD)
+│   ├── market_info.py   # Analist hedefleri, bilanço takvimi, finansman riski
+│   ├── storage.py       # SQLite: puan geçmişi, sektör kıyası, uyarılar, önbellek
+│   ├── scheduler.py     # Arka plan: uyarılar ve günlük sektör kıyas verisi
 │   └── data/            # bist_symbols.json, themes.json
 ├── tests/               # Ağ erişimsiz birim ve API testleri (pytest)
 ├── tools/
-│   └── backtest_teknik.py  # Teknik puanın geriye dönük testi
+│   ├── backtest_teknik.py  # Teknik puanın geriye dönük testi
+│   └── kalibrasyon.py      # Ağırlık kalibrasyonu (örneklem dışı doğrulamalı)
+├── docs/BACKTEST.md     # Geriye dönük test sonuçları
 ├── static/
 │   ├── index.html       # Arayüz (Detaylı Analiz, Para Akışı, İzleme Listesi)
 │   ├── styles.css       # Koyu finans teması + PDF/yazdırma stilleri

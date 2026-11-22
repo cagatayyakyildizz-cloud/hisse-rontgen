@@ -63,3 +63,17 @@ def test_compare_reports_skipped_and_errors(client):
     assert len(body["skipped"]) == 3
     assert [e["symbol"] for e in body["errors"]] == ["BOZUK"]
     assert len(body["rows"]) == app_module.MAX_COMPARE - 1
+
+
+def test_history_and_alert_endpoints(client):
+    from backend import storage
+
+    storage.record_scores("MSFT", 70, 60, 80, 2, 400.0, 100, date="2026-11-20")
+    body = client.get("/api/history/MSFT").json()
+    assert body["history"][0]["composite"] == 70
+    storage.add_alert("MSFT", "stage", "MSFT: evre degisti", "k1")
+    alerts = client.get("/api/alerts").json()
+    assert alerts["unseen"] == 1 and alerts["items"][0]["symbol"] == "MSFT"
+    assert client.post("/api/alerts/seen").json()["updated"] == 1
+    assert client.get("/api/alerts?unseen=true").json()["items"] == []
+    assert client.get("/api/history/%3Cx%3E").status_code == 422

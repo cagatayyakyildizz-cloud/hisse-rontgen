@@ -17,3 +17,7 @@ Thumbs.db
 
 # Izleme listesi atomik yazma gecici dosyalari
 .watchlist-*.tmp
+
+# SEC ve diger disk onbellegi, yerel veritabani
+.cache/
+*.sqlite3

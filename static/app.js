@@ -137,6 +137,185 @@
     }
   }
 
+  // --- Puan dokumu: her kalemin puani / agirligi ---
+  function renderBreakdown(containerId, items, total, opts = {}) {
+    const el = $(containerId);
+    el.innerHTML = "";
+    for (const it of items || []) {
+      const row = document.createElement("div");
+      const missing = it.points === null || it.points === undefined;
+      row.className = `bd-row${missing ? " missing" : ""}`;
+      const ratio = missing ? 0 : (it.max ? it.points / it.max : 0);
+      const cls = ratio >= 0.67 ? "good" : ratio >= 0.34 ? "mid" : "bad";
+      row.innerHTML = `
+        <div class="bd-label">
+          <span class="bd-name" title="${escapeHtml(it.label)}">${escapeHtml(it.label)}${it.detail ? `<span class="muted">${escapeHtml(it.detail)}</span>` : ""}</span>
+          <div class="bd-bar"><div class="bd-fill ${cls}" style="width:${Math.round(ratio * 100)}%"></div></div>
+        </div>
+        <span class="bd-val">${missing ? "veri yok" : `${fmtNum(it.points, 1)}/${fmtNum(it.max, 0)}`}</span>`;
+      el.appendChild(row);
+    }
+    const foot = document.createElement("div");
+    foot.className = "bd-total";
+    const parts = [`Puan: ${total}/100 (mevcut kalemlerin ağırlıklı ortalaması)`];
+    if (opts.coverage !== undefined && opts.coverage !== null) parts.push(`Veri kapsamı: %${opts.coverage}`);
+    if (opts.penalty) parts.push(`Ceza: −${fmtNum(opts.penalty, 0)}`);
+    foot.textContent = parts.join(" · ");
+    el.appendChild(foot);
+    if (opts.note) {
+      const n = document.createElement("div");
+      n.className = "bd-total";
+      n.textContent = `Geriye dönük test: ${opts.note}`;
+      el.appendChild(n);
+    }
+  }
+
+  function renderAnalyst(a, meta) {
+    const card = $("analystCard");
+    const body = $("analystActionsBody");
+    body.innerHTML = "";
+    if (meta.is_bist) {
+      renderKV("analystBox", [{ k: "Durum", v: "Analist hedef fiyatları yalnızca ABD / global hisseler için gösterilir." }]);
+      $("analystNote").textContent = "";
+      card.classList.add("muted-card");
+      return;
+    }
+    card.classList.remove("muted-card");
+    if (!a || !a.available) {
+      renderKV("analystBox", [{ k: "Durum", v: (a && a.note) || "Analist verisi bulunamadı." }]);
+      $("analystNote").textContent = "";
+      return;
+    }
+    const cur = a.currency || meta.currency;
+    const up = (v) => (v === null || v === undefined ? "" : ` (${fmtPct(v, 1, true)})`);
+    const cls = (v) => (v === null || v === undefined ? "" : v >= 0 ? "pos" : "neg");
+    renderKV("analystBox", [
+      { k: "Konsensüs", v: `${a.recommendation || "—"}${a.analyst_count ? ` · ${a.analyst_count} analist` : ""}` },
+      { k: "Ortalama hedef", v: a.target_mean !== null ? `${fmtNum(a.target_mean)} ${cur}${up(a.upside_mean_pct)}` : "—", cls: cls(a.upside_mean_pct) },
+      { k: "Medyan hedef", v: a.target_median !== null ? `${fmtNum(a.target_median)} ${cur}${up(a.upside_median_pct)}` : "—", cls: cls(a.upside_median_pct) },
+      { k: "En yüksek / en düşük", v: `${fmtNum(a.target_high)} / ${fmtNum(a.target_low)} ${cur}` },
+    ]);
+    for (const x of a.recent_actions || []) {
+      const tr = document.createElement("tr");
+      const tgt = x.target ? fmtNum(x.target) : "—";
+      const prior = x.prior_target && x.prior_target !== x.target ? ` <span class="muted">(${fmtNum(x.prior_target)})</span>` : "";
+      tr.innerHTML = `<td class="mono">${escapeHtml(x.date)}</td><td>${escapeHtml(x.firm)}</td>
+        <td title="${escapeHtml(x.action)}">${escapeHtml(x.to_grade || x.action)}</td><td class="num">${tgt}${prior}</td>`;
+      body.appendChild(tr);
+    }
+    if (!(a.recent_actions || []).length) body.innerHTML = `<tr><td colspan="4" class="muted">Son 6 ayda not değişikliği yok.</td></tr>`;
+    $("analystNote").textContent = a.note || "";
+  }
+
+  function renderRisk(e, fin, f) {
+    const lvl = { low: "Düşük", medium: "Orta", high: "Yüksek" };
+    const rows = [
+      {
+        k: "Sıradaki bilanço",
+        v: e && e.next_date ? `${e.next_date} (${e.days_until} gün)${e.is_estimate ? " · tahmini" : ""}` : "Tarih bilinmiyor",
+        cls: e && e.warning ? "warn" : "",
+      },
+      { k: "Son bilanço", v: (e && e.last_date) || "—" },
+    ];
+    if (e && e.eps_estimate !== null && e.eps_estimate !== undefined) rows.push({ k: "Beklenen HBK", v: fmtNum(e.eps_estimate, 2) });
+    rows.push(
+      { k: "Finansman riski", v: lvl[fin.level] || fin.level, cls: fin.level === "high" ? "neg" : fin.level === "medium" ? "warn" : "pos" },
+      { k: "Nakit ömrü", v: fin.runway_months !== null ? `${fmtNum(fin.runway_months, 0)} ay` : (fin.fcf_ttm !== null && fin.fcf_ttm >= 0 ? "Nakit üretiyor" : "—"), cls: fin.runway_months !== null && fin.runway_months < 24 ? "warn" : "" },
+      { k: "Aylık nakit yakımı", v: fin.monthly_burn ? fmtBig(fin.monthly_burn, f.financial_currency) : "—" },
+      { k: "Pay sayısı değişimi (1 yıl)", v: fmtPct(fin.share_growth_1y_pct, 1, true), cls: (fin.share_growth_1y_pct || 0) > 10 ? "neg" : "" },
+      { k: "Hisse bazlı ödeme / ciro", v: fin.sbc_pct_revenue !== null ? fmtPct(fin.sbc_pct_revenue, 1) : "—" },
+      { k: "Dönüştürülebilir borç", v: fin.convertible_debt ? fmtBig(fin.convertible_debt, "USD") : "—" },
+      { k: "Vadesi 24 ay içinde gelen borç", v: fin.debt_due_24m !== null && fin.debt_due_24m !== undefined ? fmtBig(fin.debt_due_24m, "USD") : "—" },
+    );
+    renderKV("riskBox", rows);
+  }
+
+  function renderHistory(hist) {
+    const el = $("historyChart");
+    const pts = (hist || []).filter((h) => h.composite !== null && h.composite !== undefined);
+    if (pts.length < 2) {
+      el.innerHTML = "";
+      $("historyNote").textContent = pts.length
+        ? "Puan geçmişi her analizde günlük olarak kaydedilir; grafik ikinci günden itibaren oluşur."
+        : "Henüz kayıt yok.";
+      return;
+    }
+    const W = 320, H = 110, pad = 6;
+    const x = (i) => pad + (i * (W - 2 * pad)) / (pts.length - 1);
+    const y = (v) => H - pad - (v / 100) * (H - 2 * pad);
+    const line = (key) => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[key] ?? 0).toFixed(1)}`).join(" ");
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Puan geçmişi">
+      <line x1="0" x2="${W}" y1="${y(65)}" y2="${y(65)}" stroke="rgba(148,163,184,.25)" stroke-dasharray="3 3"/>
+      <path d="${line("tech")}" fill="none" stroke="#38bdf8" stroke-width="1.3" opacity=".7"/>
+      <path d="${line("fund")}" fill="none" stroke="#f59e0b" stroke-width="1.3" opacity=".7"/>
+      <path d="${line("composite")}" fill="none" stroke="#22c55e" stroke-width="2"/>
+    </svg>`;
+    const first = pts[0], last = pts[pts.length - 1];
+    $("historyNote").textContent = `${first.date} → ${last.date} · Bileşik (yeşil) ${first.composite} → ${last.composite} · Teknik (mavi) · Bilanço (turuncu) · kesikli çizgi: 65`;
+  }
+
+  function renderSourceChecks(f) {
+    $("dataSourceLbl").textContent = f.data_source || "—";
+    const body = $("sourceCheckBody");
+    body.innerHTML = "";
+    const checks = f.source_checks || [];
+    if (!checks.length) {
+      body.innerHTML = `<tr><td colspan="4" class="muted">SEC karşılaştırması yalnızca SEC'e rapor veren ABD şirketlerinde yapılır.</td></tr>`;
+      return;
+    }
+    for (const c of checks) {
+      const tr = document.createElement("tr");
+      const big = c.diff_pct !== null && Math.abs(c.diff_pct) > 5;
+      tr.innerHTML = `<td>${escapeHtml(c.item)}</td><td class="num">${fmtBig(c.sec)}</td><td class="num">${fmtBig(c.yahoo)}</td>
+        <td class="num" style="color:${big ? "#f59e0b" : "inherit"}">${c.diff_pct !== null ? fmtPct(c.diff_pct, 1, true) : "—"}</td>`;
+      body.appendChild(tr);
+    }
+  }
+
+  function renderPeers(f) {
+    const p = f.peers || {};
+    const pc = p.percentiles || {};
+    const names = { ev_ebitda: "FD/FAVÖK (ucuzluk)", pe: "F/K (ucuzluk)", fcf_yield: "FCF getirisi", roic: "ROIC", ebit_margin: "Faaliyet marjı", rev_growth: "Büyüme" };
+    const rows = [{ k: "Kıyas grubu", v: `${(p.group || "—").replace(/^(us|bist):/, "")} · ${p.count || 0} hisse` }];
+    if (!p.used) {
+      rows.push({ k: "Durum", v: `Kıyas için en az ${p.min_count || 5} hissenin güncel verisi gerekir; arka plan görevi günde bir toplar.` });
+    } else {
+      for (const [k, label] of Object.entries(names)) {
+        const v = pc[k];
+        rows.push({ k: `${label} — sektör içi sıra`, v: v === null || v === undefined ? "—" : `%${v} (100 = en iyi)`, cls: v >= 67 ? "pos" : v !== null && v <= 33 ? "neg" : "" });
+      }
+    }
+    const c = f.cyclical || {};
+    rows.push({ k: "Döngüsel sektör", v: c.is_cyclical_industry ? "Evet" : "Hayır" });
+    rows.push({ k: "Faaliyet marjı: güncel / ort.", v: `${fmtPct(c.current_ebit_margin_pct, 1)} / ${fmtPct(c.avg_ebit_margin_pct, 1)} (${c.years_in_average || 0} yıl)`, cls: c.peak_margin ? "warn" : "" });
+    if (c.peak_margin && c.normalized_pe) rows.push({ k: "Normalize F/K (ort. marjla)", v: fmtNum(c.normalized_pe, 1), cls: "warn" });
+    renderKV("peerBox", rows);
+  }
+
+  // --- Uyarilar ---
+  async function loadAlerts() {
+    try {
+      const data = await fetchJson("/api/alerts?limit=50");
+      renderAlerts(data.items || [], data.unseen || 0);
+    } catch {
+      /* uyarilar kritik degil */
+    }
+  }
+
+  function renderAlerts(items, unseen) {
+    const badge = $("alertsCount");
+    badge.textContent = String(unseen);
+    badge.classList.toggle("hidden", !unseen);
+    const list = $("alertsList");
+    list.innerHTML = items.length ? "" : `<li class="muted">Henüz uyarı yok.</li>`;
+    for (const a of items) {
+      const li = document.createElement("li");
+      if (!a.seen) li.className = "unseen";
+      li.innerHTML = `${escapeHtml(a.message)}<span class="al-date">${escapeHtml(a.created_at.replace("T", " "))}</span>`;
+      list.appendChild(li);
+    }
+  }
+
   // Tum API cagrilari icin guvenli yardimci: sunucu JSON yerine HTML hata sayfasi donerse
   // anlamsiz "JSON parse" hatasi yerine anlasilir bir mesaj uretir; res.ok kontrolunu tek yerde yapar.
   async function fetchJson(url, options = {}) {
@@ -328,6 +507,14 @@
     } else {
       notesEl.classList.add("hidden");
     }
+
+    renderBreakdown("techBreakdown", t.score_breakdown, t.score, { note: t.backtest_evidence && t.backtest_evidence.note });
+    renderBreakdown("fundBreakdown", f.score_breakdown, f.score, { coverage: f.data_coverage_pct, penalty: f.score_penalty });
+    renderAnalyst(data.analysts, meta);
+    renderRisk(data.earnings || {}, data.financing || {}, f);
+    renderHistory(data.score_history);
+    renderSourceChecks(f);
+    renderPeers(f);
 
     // Chart currency toggle (only BIST)
     const currTog = $("currencyToggle");
@@ -546,7 +733,7 @@
 
   async function scanWatchlist() {
     if (!state.watchlist.length) {
-      $("wlTableBody").innerHTML = `<tr><td colspan="16" class="muted">İzleme listeniz boş. Yukarıdan hisse ekleyin.</td></tr>`;
+      $("wlTableBody").innerHTML = `<tr><td colspan="18" class="muted">İzleme listeniz boş. Yukarıdan hisse ekleyin.</td></tr>`;
       $("wlStatus").textContent = "";
       return;
     }
@@ -610,6 +797,8 @@
         <td class="num">${fmtPct(r.roic_pct, 1)}</td>
         <td class="num">${r.ev_ebitda !== null ? fmtNum(r.ev_ebitda, 1) + "x" : "—"}</td>
         <td class="num">${r.pe !== null ? fmtNum(r.pe, 1) : "—"}</td>
+        <td class="num" style="color:${r.earnings_days !== null && r.earnings_days <= 7 ? "#f59e0b" : "inherit"}">${r.earnings_days !== null && r.earnings_days !== undefined ? r.earnings_days + " g" : "—"}</td>
+        <td class="num" style="color:${(r.analyst_upside_pct || 0) >= 0 ? "#22c55e" : "#ef4444"}">${r.analyst_upside_pct !== null && r.analyst_upside_pct !== undefined ? fmtPct(r.analyst_upside_pct, 0, true) : "—"}</td>
         <td><span class="hl-pill">${escapeHtml(r.badge)}</span></td>
         <td class="no-print"><button type="button" class="del-btn" title="Listeden çıkar">×</button></td>
       `;
@@ -677,6 +866,11 @@
       const data = await fetchJson(`/api/money-flow?market=${encodeURIComponent(market)}&refresh=${refresh}`);
       state.flowData[market] = data;
       state.flowThemeFilter = "ALL";
+      const ex = data.excluded || {};
+      const exParts = [];
+      if ((ex.illiquid || []).length) exParts.push(`Düşük hacim nedeniyle hariç: ${ex.illiquid.map((s) => s.replace(".IS", "")).join(", ")}`);
+      if ((ex.stale || []).length) exParts.push(`Güncel verisi olmayan: ${ex.stale.map((s) => s.replace(".IS", "")).join(", ")}`);
+      $("flowSubtitle").textContent = [data.note, ...exParts].filter(Boolean).join(" · ");
       populateThemeFilter(data);
       renderMoneyFlow();
     } catch (err) {
@@ -1003,6 +1197,40 @@
     });
   });
 
+  $("alertsBtn").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const panel = $("alertsPanel");
+    const opening = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden");
+    if (opening) {
+      await loadAlerts();
+      try {
+        await fetchJson("/api/alerts/seen", { method: "POST" });
+        $("alertsCount").classList.add("hidden");
+      } catch { /* yoksay */ }
+    }
+  });
+  $("alertsCheckBtn").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const btn = $("alertsCheckBtn");
+    btn.disabled = true;
+    btn.textContent = "Kontrol ediliyor…";
+    try {
+      const data = await fetchJson("/api/alerts/check", { method: "POST" });
+      renderAlerts(data.items || [], 0);
+    } catch (err) {
+      showError(`Uyarı kontrolü başarısız: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Şimdi kontrol et";
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".alerts-wrap")) $("alertsPanel").classList.add("hidden");
+  });
+
   // Init
   loadWatchlistMeta();
+  loadAlerts();
+  setInterval(loadAlerts, 5 * 60 * 1000);
 })();

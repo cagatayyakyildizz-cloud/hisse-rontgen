@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from .data_fetcher import fetch_stock_bundle
 from .fundamental import analyze_fundamental
+from .market_info import analyst_view, earnings_info, financing_risk
+from .reference_data import theme_of
+from . import storage
+
+log = logging.getLogger("hisse_rontgen")
 from .technical import analyze_technical
 
 
@@ -86,12 +92,40 @@ def _build_verdict(tech_score: int, fund_score: int, tech: dict[str, Any], fund:
 
 def analyze_stock(raw_symbol: str, market: str = "auto", force_refresh: bool = False, include_charts: bool = True) -> dict[str, Any]:
     bundle = fetch_stock_bundle(raw_symbol, market=market, force_refresh=force_refresh)
-    tech = analyze_technical(bundle)
-    fund = analyze_fundamental(bundle)
+    tech = analyze_technical(bundle, include_charts=include_charts)
+    peer_group = _peer_group(bundle)
+    peers = None
+    try:
+        metrics, count = storage.peer_metrics(peer_group, exclude=bundle["symbol"])
+        peers = {"group": peer_group, "count": count, "metrics": metrics}
+    except Exception as exc:  # veritabani sorunu analizi durdurmasin
+        log.warning("Sektor ici kiyas verisi okunamadi: %s", exc)
+    fund = analyze_fundamental(bundle, peers=peers)
     verdict = _build_verdict(tech["score"], fund["score"], tech, fund)
+    earnings = earnings_info(bundle)
+    financing = financing_risk(bundle, fund)
+    analysts = analyst_view(bundle, tech.get("price"))
+    if earnings.get("warning"):
+        verdict["highlights"].insert(0, f"⚠ Bilanço {earnings['days_until']} gün içinde")
+        fund["flags_warn"].insert(0, earnings["warning"])
+    for msg in financing["flags"]:
+        fund["flags_warn"].append(msg)
+    if financing["level"] == "high":
+        verdict["highlights"].append("Finansman riski: Yüksek")
 
     info = bundle["info"]
     company_name = info.get("longName") or info.get("shortName") or bundle["display_symbol"]
+
+    history: list[dict[str, Any]] = []
+    try:
+        storage.record_scores(bundle["symbol"], verdict["composite_score"], tech["score"], fund["score"],
+                              tech["weinstein"]["stage"], tech.get("price"), fund.get("data_coverage_pct"))
+        own = fund.get("peer_metrics_own") or {}
+        storage.save_snapshot(bundle["symbol"], "bist" if bundle["is_bist"] else "us", peer_group,
+                              fund["sector"], fund["industry"], own)
+        history = storage.score_history(bundle["symbol"], limit=365)
+    except Exception as exc:
+        log.warning("Puan gecmisi kaydedilemedi: %s", exc)
 
     if not include_charts:
         tech_out = {k: v for k, v in tech.items() if k != "charts"}
@@ -115,7 +149,20 @@ def analyze_stock(raw_symbol: str, market: str = "auto", force_refresh: bool = F
         "verdict": verdict,
         "technical": tech_out,
         "fundamental": fund,
+        "earnings": earnings,
+        "financing": financing,
+        "analysts": analysts,
+        "score_history": history,
     }
+
+
+def _peer_group(bundle: dict[str, Any]) -> str:
+    """Kiyas grubu: hisse bir temadaysa tema, degilse piyasa + Yahoo endustrisi."""
+    found = theme_of(bundle["symbol"])
+    if found:
+        return f"{found[0]}:{found[1]}"
+    market = "bist" if bundle["is_bist"] else "us"
+    return f"{market}:{(bundle.get('info') or {}).get('industry') or 'Bilinmiyor'}"
 
 
 def build_summary_row(raw_symbol: str, market: str = "auto") -> dict[str, Any]:
@@ -151,4 +198,9 @@ def build_summary_row(raw_symbol: str, market: str = "auto") -> dict[str, Any]:
         "ev_ebitda": f["valuation"]["ev_ebitda"],
         "net_debt_ebitda": f["balance_health"]["net_debt_to_ebitda"],
         "adr20_pct": t["volatility_risk"]["adr20_pct"],
+        "next_earnings": res["earnings"]["next_date"],
+        "earnings_days": res["earnings"]["days_until"],
+        "financing_risk": res["financing"]["level"],
+        "analyst_target_mean": (res["analysts"] or {}).get("target_mean"),
+        "analyst_upside_pct": (res["analysts"] or {}).get("upside_mean_pct"),
     }
