@@ -21,6 +21,11 @@
     flowSearch: "",
     flowSortKey: "flow_score",
     flowSortDir: -1,
+    scanMarket: "bist",
+    scanPreset: "rs_liderleri",
+    scanPresets: [],
+    positionPlan: null,
+    positionLines: [],
   };
 
   // --- Formatting helpers ---
@@ -86,6 +91,9 @@
     const isAna = view === "analysis";
     const isFlow = view === "flow";
     const isWl = view === "watchlist";
+    const isScan = view === "scan";
+    $("tabScan").classList.toggle("active", isScan);
+    $("scanView").classList.toggle("hidden", !isScan);
     $("tabAnalysis").classList.toggle("active", isAna);
     $("tabFlow").classList.toggle("active", isFlow);
     $("tabWatchlist").classList.toggle("active", isWl);
@@ -102,6 +110,8 @@
         else renderMoneyFlow();
       } else if (isWl && state.wlRows.length === 0 && state.watchlist.length > 0) {
         scanWatchlist();
+      } else if (isScan) {
+        initScanner();
       }
     }
   }
@@ -292,6 +302,219 @@
     renderKV("peerBox", rows);
   }
 
+  // --- Pozisyon boyutu ---
+  function lsGet(k, d) {
+    try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; }
+  }
+  function lsSet(k, v) {
+    try { localStorage.setItem(k, v); } catch { /* yoksay */ }
+  }
+
+  function setupPositionCard(data) {
+    const pos = data.position || {};
+    const cur = data.meta.currency;
+    const capKey = `hr_capital_${data.meta.is_bist ? "bist" : "us"}`;
+    $("posCapital").value = lsGet(capKey, data.meta.is_bist ? "200000" : "10000");
+    $("posRisk").value = lsGet("hr_risk", "1");
+    $("posMaxPct").value = lsGet("hr_maxpct", "25");
+    const sel = $("posStopSel");
+    sel.innerHTML = "";
+    for (const o of pos.stop_options || []) {
+      const opt = document.createElement("option");
+      opt.value = String(o.price);
+      opt.textContent = `${o.label}: ${fmtNum(o.price)} ${cur} (−%${fmtNum(o.distance_pct, 1)})`;
+      sel.appendChild(opt);
+    }
+    const custom = document.createElement("option");
+    custom.value = "custom";
+    custom.textContent = "Özel stop fiyatı…";
+    sel.appendChild(custom);
+    $("posCustomWrap").classList.toggle("hidden", sel.value !== "custom");
+    state.positionPlan = null;
+    $("positionBox").innerHTML = "";
+    $("positionWarn").innerHTML = "";
+    $("positionNote").textContent = "Sermaye ve risk yüzdesini girip Hesapla'ya basın. Değerler bu tarayıcıda hatırlanır.";
+  }
+
+  async function calcPosition() {
+    const data = state.currentData;
+    if (!data) return;
+    const sel = $("posStopSel").value;
+    const stop = sel === "custom" ? Number($("posCustomStop").value) : Number(sel);
+    const body = {
+      entry: data.technical.price,
+      stop,
+      capital: Number($("posCapital").value),
+      risk_pct: Number($("posRisk").value),
+      max_position_pct: Number($("posMaxPct").value) || 100,
+      lot_size: (data.position && data.position.lot_size) || 1,
+      avg_turnover: (data.position && data.position.avg_turnover_20d) || null,
+    };
+    lsSet(`hr_capital_${data.meta.is_bist ? "bist" : "us"}`, String(body.capital));
+    lsSet("hr_risk", String(body.risk_pct));
+    lsSet("hr_maxpct", String(body.max_position_pct));
+    let plan;
+    try {
+      plan = await fetchJson("/api/position", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      $("positionWarn").innerHTML = `<li>${escapeHtml(err.message)}</li>`;
+      return;
+    }
+    state.positionPlan = plan;
+    const cur = data.meta.currency;
+    renderKV("positionBox", [
+      { k: "Alınacak adet", v: `${plan.shares.toLocaleString("tr-TR")} adet`, cls: plan.shares ? "pos" : "neg" },
+      { k: "Giriş / Stop", v: `${fmtNum(plan.entry)} / ${fmtNum(plan.stop)} ${cur} (−%${fmtNum(plan.stop_distance_pct, 2)})` },
+      { k: "Pozisyon tutarı", v: `${fmtNum(plan.position_value)} ${cur} (sermayenin %${fmtNum(plan.position_pct_of_capital, 1)})` },
+      { k: "Stop olursa en fazla zarar", v: `${fmtNum(plan.max_loss)} ${cur} (%${fmtNum(plan.actual_risk_pct, 2)})`, cls: "neg" },
+      ...plan.targets.map((t) => ({ k: `${t.r}R kâr al`, v: `${fmtNum(t.price)} ${cur} (+%${fmtNum(t.pct, 1)} · +${fmtNum(t.gain)} ${cur})`, cls: "pos" })),
+      { k: "Sınırlayan", v: plan.limited_by === "risk" ? "Risk bütçesi" : "Sermaye üst sınırı" },
+    ]);
+    $("positionWarn").innerHTML = (plan.warnings || []).map((w) => `<li>${escapeHtml(w)}</li>`).join("");
+    $("positionNote").textContent = plan.note || "";
+    drawPositionLines(state.chartCurrency === "usd");
+  }
+
+  function drawPositionLines(useUsd) {
+    const candles = state.chartSeries && state.chartSeries.candles;
+    if (!candles) return;
+    for (const l of state.positionLines) {
+      try { candles.removePriceLine(l); } catch { /* yoksay */ }
+    }
+    state.positionLines = [];
+    const plan = state.positionPlan;
+    if (!plan || useUsd) return; // USD grafikte fiyatlar farkli birimde
+    const mk = (price, color, title, style = 2) =>
+      candles.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title });
+    state.positionLines.push(mk(plan.entry, "#94a3b8", "Giriş", 0));
+    state.positionLines.push(mk(plan.stop, "#ef4444", "Stop"));
+    for (const t of plan.targets) state.positionLines.push(mk(t.price, "#22c55e", `${t.r}R`));
+  }
+
+  // --- Super Tarayici ---
+  async function initScanner() {
+    if (!state.scanPresets.length) {
+      try {
+        const data = await fetchJson("/api/scan/presets");
+        state.scanPresets = data.presets || [];
+      } catch (err) {
+        $("scanStatus").textContent = `Filtreler yüklenemedi: ${err.message}`;
+        return;
+      }
+    }
+    renderPresetButtons();
+    runScan();
+  }
+
+  function evidenceTag(ev) {
+    if (!ev) return { cls: "neutral", text: "test sonucu yok" };
+    if (ev.testable === false) return { cls: "neutral", text: "bilanço filtresi · test edilemez" };
+    const v = ev.verdict || "";
+    const cls = v.startsWith("endeksi ve evreni") ? "good" : v.startsWith("evrenin gerisinde") ? "bad" : "neutral";
+    return { cls, text: `geçmiş: ${v}` };
+  }
+
+  function renderPresetButtons() {
+    const box = $("scanPresets");
+    box.innerHTML = "";
+    const all = [...state.scanPresets, { key: "ozel", name: "Özel Filtre", description: "Kendi eşiklerin", evidence: {} }];
+    for (const p of all) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `scan-preset${p.key === state.scanPreset ? " active" : ""}`;
+      const tag = p.key === "ozel" ? { cls: "neutral", text: "kendi eşiklerin" } : evidenceTag((p.evidence || {})[state.scanMarket]);
+      b.innerHTML = `${escapeHtml(p.name)}<span class="sp-tag ${tag.cls}">${escapeHtml(tag.text)}</span>`;
+      b.title = p.description || "";
+      b.addEventListener("click", () => {
+        state.scanPreset = p.key;
+        renderPresetButtons();
+        $("scanCustomForm").classList.toggle("hidden", p.key !== "ozel");
+        if (p.key !== "ozel") runScan();
+      });
+      box.appendChild(b);
+    }
+  }
+
+  function renderEvidence(res) {
+    const el = $("scanEvidence");
+    const p = res.preset;
+    const ev = res.evidence;
+    const conds = (p.conditions || []).map((c) => escapeHtml(c.label)).join(" · ");
+    let html = `<strong>${escapeHtml(p.name)}</strong> — ${escapeHtml(p.description || "")}<div class="muted" style="margin-top:4px">${conds}</div>`;
+    if (ev && ev.testable && ev.signals) {
+      const b = ev.baseline || {};
+      html += `<div class="ev-grid">
+        <span>Geçmiş sinyal: <strong>${ev.signals}</strong></span>
+        <span>6 ay sonra endekse göre medyan: <strong>${fmtPct(ev.median, 1, true)}</strong> (evren ${fmtPct(b.median, 1, true)})</span>
+        <span>Endeksi yenme: <strong>%${fmtNum(ev.hit_pct, 1)}</strong> (evren %${fmtNum(b.hit_pct, 1)})</span>
+        <span>Aynı ay ortalamasına göre: <strong>${fmtPct(ev.vs_month_mean, 1, true)}</strong></span>
+        <span>Sonuç: <strong>${escapeHtml(ev.verdict)}</strong></span>
+      </div>`;
+      if ((ev.untested || []).length) html += `<div class="muted" style="font-size:12px;margin-top:4px">Test edilmeyen koşullar: ${escapeHtml(ev.untested.join(", "))}</div>`;
+    } else if (ev && ev.testable === false) {
+      html += `<div class="muted" style="font-size:12px;margin-top:4px">${escapeHtml(ev.note || "Geriye dönük test edilemez.")}</div>`;
+    } else if (p.key !== "ozel") {
+      html += `<div class="muted" style="font-size:12px;margin-top:4px">Bu piyasa için geriye dönük test sonucu yok.</div>`;
+    }
+    el.innerHTML = html;
+  }
+
+  async function runScan() {
+    const params = new URLSearchParams({ market: state.scanMarket, preset: state.scanPreset });
+    if (state.scanPreset === "ozel") {
+      for (const [id, key] of [["scMinComp", "min_composite"], ["scMinTech", "min_tech"], ["scMinFund", "min_fund"], ["scMinFlow", "min_flow_1w"]]) {
+        const v = $(id).value;
+        if (v !== "") params.set(key, v);
+      }
+    }
+    $("scanStatus").textContent = "Taranıyor… (para akışı verisi ilk seferde 10–20 sn sürebilir)";
+    $("scanBody").innerHTML = "";
+    let res;
+    try {
+      res = await fetchJson(`/api/scan?${params}`);
+    } catch (err) {
+      $("scanStatus").textContent = `Tarama hatası: ${err.message}`;
+      return;
+    }
+    renderEvidence(res);
+    const parts = [`${res.matches.length} hisse filtreyi geçti · taranan ${res.scanned}/${res.universe}`];
+    if (res.data_dates) parts.push(`veri: ${res.data_dates[0]} – ${res.data_dates[1]}`);
+    if (res.undecided) parts.push(`${res.undecided} hissede veri eksikliğinden karar verilemedi`);
+    if (!res.flow_available) parts.push("para akışı verisi alınamadı (akış koşulları değerlendirilemedi)");
+    if (res.scanned < res.universe * 0.8) parts.push("bazı hisselerin güncel analizi yok — arka plan görevi günde bir tamamlar");
+    $("scanStatus").textContent = parts.join(" · ");
+    const body = $("scanBody");
+    if (!res.matches.length) {
+      body.innerHTML = `<tr><td colspan="14" class="muted">Bu filtreyi şu an geçen hisse yok.</td></tr>`;
+      return;
+    }
+    for (const r of res.matches) {
+      const tr = document.createElement("tr");
+      const flow = (v) => (v === null || v === undefined ? "—" : `<span style="color:${v >= 0 ? "#22c55e" : "#ef4444"}">${v > 0 ? "+" : ""}${v}</span>`);
+      tr.innerHTML = `
+        <td><strong class="mono">${escapeHtml(r.display_symbol)}</strong><div class="muted" style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name || "")}</div></td>
+        <td class="muted" style="font-size:12px">${escapeHtml(r.theme || r.sector || "—")}</td>
+        <td class="num"><span class="score-chip ${scoreClass(r.composite_score)}">${r.composite_score}</span></td>
+        <td class="num"><span class="score-chip ${scoreClass(r.tech_score)}">${r.tech_score}</span></td>
+        <td class="num"><span class="score-chip ${scoreClass(r.fund_score)}">${r.fund_score}</span></td>
+        <td class="num">${flow(r.flow_1w)}</td>
+        <td class="num">${flow(r.flow_1m)}</td>
+        <td class="num">${r.rs ?? "—"}</td>
+        <td class="mono">${escapeHtml(r.minervini || "—")}</td>
+        <td class="num">${fmtPct(r.roic_pct, 1)}</td>
+        <td class="mono">${escapeHtml(r.piotroski || "—")}</td>
+        <td class="num">${r.earnings_days !== null && r.earnings_days !== undefined ? r.earnings_days + " g" : "—"}</td>
+        <td class="num">${r.analyst_upside_pct !== null && r.analyst_upside_pct !== undefined ? fmtPct(r.analyst_upside_pct, 0, true) : "—"}</td>
+        <td class="num muted" style="font-size:11px">${escapeHtml(r._date || "")}</td>`;
+      tr.addEventListener("click", () => runAnalyze(r.symbol, r.is_bist ? "bist" : "us"));
+      body.appendChild(tr);
+    }
+  }
+
   // --- Uyarilar ---
   async function loadAlerts() {
     try {
@@ -435,6 +658,7 @@
 
     chart.timeScale().fitContent();
     state.chartObj = chart;
+    drawPositionLines(useUsd);
   }
 
   window.addEventListener("resize", () => {
@@ -452,6 +676,8 @@
     $("welcomeView").classList.add("hidden");
     $("flowView").classList.add("hidden");
     $("watchlistView").classList.add("hidden");
+    $("scanView").classList.add("hidden");
+    $("tabScan").classList.remove("active");
     $("analysisView").classList.remove("hidden");
     $("tabAnalysis").classList.add("active");
     $("tabFlow").classList.remove("active");
@@ -508,6 +734,7 @@
       notesEl.classList.add("hidden");
     }
 
+    setupPositionCard(data);
     renderBreakdown("techBreakdown", t.score_breakdown, t.score, { note: t.backtest_evidence && t.backtest_evidence.note });
     renderBreakdown("fundBreakdown", f.score_breakdown, f.score, { coverage: f.data_coverage_pct, penalty: f.score_penalty });
     renderAnalyst(data.analysts, meta);
@@ -1089,6 +1316,30 @@
   $("tabAnalysis").addEventListener("click", () => switchView("analysis"));
   $("tabFlow").addEventListener("click", () => switchView("flow"));
   $("tabWatchlist").addEventListener("click", () => switchView("watchlist"));
+  $("tabScan").addEventListener("click", () => switchView("scan"));
+  document.querySelectorAll("#scanMarketToggle .mini-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.scanMarket = b.dataset.mkt;
+      document.querySelectorAll("#scanMarketToggle .mini-btn").forEach((x) => x.classList.toggle("active", x === b));
+      renderPresetButtons();
+      runScan();
+    });
+  });
+  $("scanCustomForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    runScan();
+  });
+  $("positionForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    calcPosition();
+  });
+  $("posStopSel").addEventListener("change", () => {
+    $("posCustomWrap").classList.toggle("hidden", $("posStopSel").value !== "custom");
+  });
+  $("posClear").addEventListener("click", () => {
+    state.positionPlan = null;
+    drawPositionLines(false);
+  });
   $("toggleWatchBtn").addEventListener("click", toggleCurrentWatchlist);
   $("printBtn").addEventListener("click", () => window.print());
 

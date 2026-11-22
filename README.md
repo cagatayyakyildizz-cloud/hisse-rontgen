@@ -46,7 +46,12 @@
 - **Puan geçmişi:** her analiz günlük olarak yerel veritabanına (`.cache/hisse_rontgen.sqlite3`) kaydedilir.
 - **İzleme listesi uyarıları:** evre değişimi, ±15 puan değişimi ve yaklaşan bilanço; sunucu açıkken 30 dakikada bir kontrol edilir (🔔 Uyarılar).
 
-### 5. Şeffaf Puanlama
+### 5. Süper Tarayıcı ve Pozisyon Boyutu
+- **Süper Tarayıcı** sekmesi: BIST veya ABD evrenini hazır filtrelerle tarar (Göreli Güç Liderleri, Altın Kesişim, Erken Rotasyon, Kaliteli ve Görece Ucuz, VCP Kırılım) veya kendi eşiklerinle. Kaydedilmiş günlük analizlerden çalıştığı için hızlıdır.
+- Her filtrenin yanında **geçmiş performansı** gösterilir (`tools/backtest_tarayici.py`; sonuçlar [docs/BACKTEST.md](docs/BACKTEST.md)).
+- **Pozisyon boyutu:** sermaye ve risk yüzdesine göre alınacak adet, en fazla zarar, 2R/3R kâr al seviyeleri ve likidite uyarısı; giriş, stop ve hedefler mum grafiğine çizilir.
+
+### 6. Şeffaf Puanlama
 - Her puanın **kalem kalem dökümü** gösterilir (ör. "ROIC: 15/15, Değerleme: 7/15").
 - **ABD bilançosu SEC EDGAR'dan** (resmi XBRL verisi) alınır; Yahoo yalnızca yedek kaynaktır ve iki kaynak %5'ten fazla farklıysa uyarı gösterilir. SEC istekleri için `SEC_USER_AGENT` ortam değişkeniyle kendi uygulama adınızı ve e-postanızı verebilirsiniz.
 - Bilanço puanı **yalnızca mevcut verilerle** hesaplanır: eksik bir kalem puan kazandırmaz ya da kaybettirmez; puanın yanında **veri kapsamı (%)** ve eksik kalemler gösterilir.
@@ -127,11 +132,14 @@ hisse-rontgen/
 │   ├── market_info.py   # Analist hedefleri, bilanço takvimi, finansman riski
 │   ├── storage.py       # SQLite: puan geçmişi, sektör kıyası, uyarılar, önbellek
 │   ├── scheduler.py     # Arka plan: uyarılar ve günlük sektör kıyas verisi
+│   ├── screener.py      # Süper Tarayıcı filtreleri
+│   ├── position.py      # Pozisyon boyutu hesaplayıcısı
 │   └── data/            # bist_symbols.json, themes.json
 ├── tests/               # Ağ erişimsiz birim ve API testleri (pytest)
 ├── tools/
 │   ├── backtest_teknik.py  # Teknik puanın geriye dönük testi
-│   └── kalibrasyon.py      # Ağırlık kalibrasyonu (örneklem dışı doğrulamalı)
+│   ├── kalibrasyon.py      # Ağırlık kalibrasyonu (örneklem dışı doğrulamalı)
+│   └── backtest_tarayici.py # Tarayıcı filtrelerinin geriye dönük testi
 ├── docs/BACKTEST.md     # Geriye dönük test sonuçları
 ├── static/
 │   ├── index.html       # Arayüz (Detaylı Analiz, Para Akışı, İzleme Listesi)

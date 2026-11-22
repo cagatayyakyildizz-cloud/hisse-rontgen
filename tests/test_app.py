@@ -77,3 +77,21 @@ def test_history_and_alert_endpoints(client):
     assert client.post("/api/alerts/seen").json()["updated"] == 1
     assert client.get("/api/alerts?unseen=true").json()["items"] == []
     assert client.get("/api/history/%3Cx%3E").status_code == 422
+
+
+def test_scan_and_position_endpoints(client, monkeypatch):
+    from backend import storage
+
+    monkeypatch.setattr(app_module, "compute_money_flow", lambda market="bist", force_refresh=False: None)
+    storage.save_screen_row("AAA", "us", {"symbol": "AAA", "display_symbol": "AAA", "composite_score": 80,
+                                          "rs": 90, "rs_above_sma50": True, "above_avwap_low": True})
+    body = client.get("/api/scan?market=us&preset=rs_liderleri").json()
+    assert [m["symbol"] for m in body["matches"]] == ["AAA"]
+    assert client.get("/api/scan?market=us&preset=yok").status_code == 404
+    assert client.get("/api/scan?market=us&preset=ozel").status_code == 400
+    assert len(client.get("/api/scan/presets").json()["presets"]) == len(app_module.screener.PRESETS)
+
+    ok = client.post("/api/position", json={"entry": 100, "stop": 95, "capital": 200000, "risk_pct": 1})
+    assert ok.json()["shares"] == 400
+    bad = client.post("/api/position", json={"entry": 100, "stop": 105, "capital": 200000, "risk_pct": 1})
+    assert bad.status_code == 400 and "Stop" in bad.json()["detail"]

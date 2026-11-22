@@ -43,6 +43,7 @@
         <div class="view-tabs">
           <button type="button" class="tab-btn active" id="tabAnalysis">Detaylı Analiz</button>
           <button type="button" class="tab-btn" id="tabFlow">Para Akışı &amp; Temalar</button>
+          <button type="button" class="tab-btn" id="tabScan">Süper Tarayıcı</button>
           <button type="button" class="tab-btn" id="tabWatchlist">
             İzleme Listesi <span class="badge-count" id="watchlistCount">0</span>
           </button>
@@ -267,6 +268,32 @@
         </div>
 
         <div id="chartContainer" class="chart-container"></div>
+      </div>
+
+      <!-- Pozisyon Boyutu -->
+      <div class="card no-print" id="positionCard">
+        <div class="card-header-inline">
+          <h3 class="card-title">Pozisyon Boyutu &amp; Stop / Hedef</h3>
+          <span class="muted" style="font-size:12px">Sabit risk yöntemi · yalnızca alış · grafiğe çizilir</span>
+        </div>
+        <form class="pos-form" id="positionForm">
+          <label>Sermaye <input type="number" id="posCapital" min="1" step="any" required /></label>
+          <label>Risk % <input type="number" id="posRisk" min="0.05" max="10" step="0.05" value="1" required /></label>
+          <label>Stop
+            <select id="posStopSel"></select>
+          </label>
+          <label class="hidden" id="posCustomWrap">Stop fiyatı <input type="number" id="posCustomStop" min="0" step="any" /></label>
+          <label>En fazla sermaye % <input type="number" id="posMaxPct" min="1" max="100" step="1" value="25" /></label>
+          <button type="submit" class="btn btn-primary">Hesapla</button>
+          <button type="button" class="btn btn-ghost" id="posClear">Çizgileri temizle</button>
+        </form>
+        <div class="grid-2" style="margin-top:12px">
+          <div class="kv-list" id="positionBox"></div>
+          <div>
+            <ul class="pos-warn" id="positionWarn"></ul>
+            <div class="muted" style="font-size:11px" id="positionNote"></div>
+          </div>
+        </div>
       </div>
 
       <!-- BOLUM 1: TEKNIK ANALIZ -->
@@ -529,6 +556,49 @@
     </section>
 
     <!-- IZLEME LISTESI VE COKLU KIYASLAMA GORUNUMU -->
+    <section id="scanView" class="hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title" style="font-size:18px;margin-bottom:4px">Süper Tarayıcı</h2>
+            <div class="muted">Tekno-temel puanlar ile para akışının kesişimi. Kaydedilmiş günlük analizlerden tarar; Yahoo'ya yeni istek atmaz.</div>
+          </div>
+          <div class="flow-controls no-print">
+            <div class="btn-group" id="scanMarketToggle">
+              <button type="button" class="mini-btn active" data-mkt="bist">BIST</button>
+              <button type="button" class="mini-btn" data-mkt="us">ABD</button>
+            </div>
+          </div>
+        </div>
+        <div class="scan-presets" id="scanPresets"></div>
+        <form class="pos-form hidden" id="scanCustomForm">
+          <label>Bileşik ≥ <input type="number" id="scMinComp" min="0" max="100" /></label>
+          <label>Teknik ≥ <input type="number" id="scMinTech" min="0" max="100" /></label>
+          <label>Bilanço ≥ <input type="number" id="scMinFund" min="0" max="100" /></label>
+          <label>Haftalık akış ≥ <input type="number" id="scMinFlow" min="-100" max="100" /></label>
+          <button type="submit" class="btn btn-primary">Tara</button>
+        </form>
+        <div class="scan-evidence" id="scanEvidence"></div>
+        <div class="muted" id="scanStatus" style="margin:8px 0"></div>
+        <div class="table-wrap">
+          <table class="data-table" id="scanTable">
+            <thead>
+              <tr>
+                <th>Hisse</th><th>Tema</th><th class="num">Bileşik</th><th class="num">Teknik</th><th class="num">Bilanço</th>
+                <th class="num">Akış 1H</th><th class="num">Akış 1A</th><th class="num">RS</th><th>Minervini</th>
+                <th class="num">ROIC</th><th>Piotroski</th><th class="num">Bilanço Günü</th><th class="num">Hedef ↑</th><th class="num">Veri</th>
+              </tr>
+            </thead>
+            <tbody id="scanBody"></tbody>
+          </table>
+        </div>
+        <div class="disclaimer" style="margin-top:14px">
+          <strong>Not:</strong> Geçmiş performans bilgisi <code>tools/backtest_tarayici.py</code> ile ölçülür. Bilanço koşulları geriye dönük test edilemez;
+          bu durumda yalnızca teknik ve akış koşullarının sonucu gösterilir. Hayatta kalma yanlılığı ve işlem maliyetleri hariçtir. Yatırım tavsiyesi değildir.
+        </div>
+      </div>
+    </section>
+
     <section id="watchlistView" class="hidden">
       <div class="card">
         <div class="card-header">

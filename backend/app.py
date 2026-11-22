@@ -15,7 +15,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import scheduler, storage
+from . import scheduler, screener, storage
+from .position import PositionError, plan_position
 from .analyzer import analyze_stock, build_summary_row
 from .data_fetcher import resolve_symbol
 from .money_flow import compute_money_flow
@@ -89,6 +90,16 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 class WatchlistItemIn(BaseModel):
     symbol: str = Field(..., pattern=SYMBOL_PATTERN)
     market: str = Field("auto", pattern="^(auto|bist|us)$")
+
+
+class PositionRequest(BaseModel):
+    entry: float = Field(..., gt=0)
+    stop: float = Field(..., gt=0)
+    capital: float = Field(..., gt=0)
+    risk_pct: float = Field(..., gt=0, le=10)
+    lot_size: int = Field(1, ge=1, le=100000)
+    max_position_pct: float = Field(100.0, gt=0, le=100)
+    avg_turnover: float | None = Field(None, ge=0)
 
 
 class CompareRequest(BaseModel):
@@ -231,3 +242,43 @@ def api_peers_refresh(market: str = Query("us", pattern="^(bist|us)$")) -> dict[
 @app.get("/api/scheduler")
 def api_scheduler() -> dict[str, Any]:
     return scheduler.status()
+
+
+@app.get("/api/scan/presets")
+def api_scan_presets() -> dict[str, Any]:
+    evidence = screener.load_evidence()
+    return {"presets": [{**p, "evidence": evidence.get(p["key"], {})} for p in screener.PRESETS],
+            "evidence_meta": evidence.get("_meta")}
+
+
+@app.get("/api/scan")
+def api_scan(
+    market: str = Query("bist", pattern="^(bist|us)$"),
+    preset: str = Query("altin_kesisim", pattern="^[a-z_]{1,40}$"),
+    min_composite: float | None = Query(None, ge=0, le=100),
+    min_tech: float | None = Query(None, ge=0, le=100),
+    min_fund: float | None = Query(None, ge=0, le=100),
+    min_flow_1w: float | None = Query(None, ge=-100, le=100),
+) -> dict[str, Any]:
+    if preset == "ozel":
+        p = screener.custom_preset(min_composite, min_tech, min_fund, min_flow_1w)
+        if not p["conditions"]:
+            raise HTTPException(status_code=400, detail="Özel filtre için en az bir eşik girin.")
+    elif preset in screener.PRESET_BY_KEY:
+        p = screener.PRESET_BY_KEY[preset]
+    else:
+        raise HTTPException(status_code=404, detail=f"Bilinmeyen filtre: {preset}")
+    try:
+        flow = compute_money_flow(market=market)
+    except Exception:
+        flow = None  # akis verisi yoksa akis kosullari "degerlendirilemedi" olur
+    return screener.run_scan(market, p, flow)
+
+
+@app.post("/api/position")
+def api_position(req: PositionRequest) -> dict[str, Any]:
+    try:
+        return plan_position(req.entry, req.stop, req.capital, req.risk_pct, req.lot_size,
+                             req.max_position_pct, req.avg_turnover)
+    except PositionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

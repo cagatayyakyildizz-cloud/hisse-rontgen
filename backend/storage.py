@@ -48,6 +48,11 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_group ON metrics_snapshot (peer_group, d
 CREATE TABLE IF NOT EXISTS analysis_cache (
     key TEXT PRIMARY KEY, saved_at REAL NOT NULL, payload TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS screen_rows (
+    symbol TEXT NOT NULL, date TEXT NOT NULL, market TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (symbol, date)
+);
+CREATE INDEX IF NOT EXISTS idx_screen_market ON screen_rows (market, date);
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL, created_at TEXT NOT NULL,
     kind TEXT NOT NULL, message TEXT NOT NULL, seen INTEGER NOT NULL DEFAULT 0,
@@ -113,7 +118,10 @@ def save_snapshot(symbol: str, market: str, peer_group: str | None, sector: str 
 
 def snapshot_count(date: str | None = None) -> int:
     d = date or _today()
-    return int(_run(lambda c: c.execute("SELECT COUNT(*) FROM metrics_snapshot WHERE date=?", (d,)).fetchone()[0]))
+    # Tarama satiri her analizde kiyas goruntusuyle birlikte yazilir; ikisinin de bugun var olmasi gerekir
+    return int(_run(lambda c: c.execute(
+        """SELECT COUNT(*) FROM metrics_snapshot m JOIN screen_rows r ON r.symbol=m.symbol AND r.date=m.date
+           WHERE m.date=?""", (d,)).fetchone()[0]))
 
 
 def peer_metrics(peer_group: str, exclude: str | None = None) -> tuple[dict[str, list[float]], int]:
@@ -149,6 +157,35 @@ def percentile_rank(value: float, population: Iterable[float], better: str) -> f
         worse = sum(1 for p in pop if p > value)
     ties = sum(1 for p in pop if p == value)
     return (worse + 0.5 * ties) / len(pop)
+
+
+# ---------------------------------------------------------------- tarayici satirlari
+
+def save_screen_row(symbol: str, market: str, row: dict[str, Any], date: str | None = None) -> None:
+    d = date or _today()
+    data = json.dumps(row, ensure_ascii=False, default=str)
+    _run(lambda c: c.execute("INSERT OR REPLACE INTO screen_rows VALUES (?,?,?,?)", (symbol.upper(), d, market, data)))
+
+
+def latest_screen_rows(market: str, max_age_days: int = 3) -> list[dict[str, Any]]:
+    """Her hissenin son (<= max_age_days gunluk) tarama satiri; '_date' alani eklenir."""
+    since = (dt.date.today() - dt.timedelta(days=max_age_days)).isoformat()
+
+    def q(c):
+        return c.execute(
+            """SELECT r.symbol, r.date, r.payload FROM screen_rows r
+               JOIN (SELECT symbol, MAX(date) d FROM screen_rows WHERE market=? AND date>=? GROUP BY symbol) x
+               ON r.symbol=x.symbol AND r.date=x.d WHERE r.market=?""", (market, since, market)).fetchall()
+
+    out = []
+    for r in _run(q):
+        try:
+            row = json.loads(r["payload"])
+        except Exception:
+            continue
+        row["_date"] = r["date"]
+        out.append(row)
+    return out
 
 
 # ---------------------------------------------------------------- analiz onbellegi
