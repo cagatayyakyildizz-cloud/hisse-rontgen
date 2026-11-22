@@ -63,7 +63,9 @@ def _build_verdict(tech_score: int, fund_score: int, tech: dict[str, Any], fund:
     highlights.append(f"Weinstein Evresi: {tech['weinstein']['label']}")
     highlights.append(f"Minervini Şablonu: {min_p}/8")
     if tech["relative_strength"]["rs_score_est"] is not None:
-        highlights.append(f"Göreceli Güç (RS): ~{tech['relative_strength']['rs_score_est']}/99")
+        highlights.append(f"RS Tahmini (endekse göre): ~{tech['relative_strength']['rs_score_est']}")
+    if fund.get("data_coverage_pct") is not None and fund["data_coverage_pct"] < 100:
+        highlights.append(f"Bilanço veri kapsamı: %{fund['data_coverage_pct']}")
     if pio is not None:
         highlights.append(f"Piotroski F-Score: {pio}/{pio_av}")
     if fund["valuation"]["ev_ebitda"] is not None:
@@ -104,6 +106,7 @@ def analyze_stock(raw_symbol: str, market: str = "auto", force_refresh: bool = F
             "is_bist": bundle["is_bist"],
             "market_label": "BIST" if bundle["is_bist"] else (info.get("exchange") or "ABD / Global"),
             "currency": bundle["currency"],
+            "currency_major": bundle.get("currency_major", bundle["currency"]),
             "financial_currency": bundle["financial_currency"],
             "sector": fund["sector"],
             "industry": fund["industry"],
@@ -135,6 +138,7 @@ def build_summary_row(raw_symbol: str, market: str = "auto") -> dict[str, Any]:
         "composite_score": v["composite_score"],
         "tech_score": t["score"],
         "fund_score": f["score"],
+        "fund_coverage_pct": f.get("data_coverage_pct"),
         "badge": v["badge"],
         "tone": v["tone"],
         "stage": t["weinstein"]["stage"],

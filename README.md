@@ -22,19 +22,26 @@
   - **Piotroski F-Score (0–9)** — tüm 9 muhasebe kriteri tek tek
   - **Altman Z-Score** (finansal sıkıntı testi) ve **Beneish M-Score** (kâr manipülasyonu riski)
   - **Joel Greenblatt Sihirli Formülü** (`EBIT/EV` ve `ROC`)
+  - **Esas Faaliyet Kârı Odaklı:** EBIT ve FAVÖK, yatırım satış kazancı gibi faaliyet dışı kalemleri içermeyen *esas faaliyet kârından* hesaplanır.
   - **Kârlılık & Nakit Kalitesi:** `ROIC`, `ROCE`, `ROE`, Brüt/FAVÖK/EBIT marjları, `OCF/Net Kâr`, Serbest Nakit Akışı (`FCF`) ve `FCF Getirisi`
-  - **Borç & Değerleme:** `Net Borç/FAVÖK`, Cari/Asit-Test, Faiz Karşılama, `F/K`, `PD/DD`, `FD/FAVÖK`, `PEG`, Graham Çarpımı ve 4 yıllık finansal özet tablosu
+  - **Borç & Değerleme:** `Net Borç/FAVÖK` (net borç = toplam borç − nakit ve kısa vadeli yatırımlar; kiralar ayrıca gösterilir), Cari/Asit-Test, Faiz Karşılama, `F/K`, `PD/DD`, `FD/FAVÖK`, `PEG`, Graham Çarpımı ve 4 yıllık finansal özet tablosu
   - **Akıllı Kur Hizalama:** `THYAO`, `PGSUS`, `TAVHL` gibi finansallarını USD/EUR raporlayıp TRY işlem gören BIST hisselerinde çarpanları otomatik kur düzeltmesiyle tutarlı hesaplar.
-  - **Sektör & TMS 29 Farkındalığı:** Banka/Finans şirketlerinde `ROE` ve `PD/DD` odaklı puanlama; BIST hisselerinde TMS 29 enflasyon muhasebesi notları; `KOZAL → TRALT`, `KOZAA → TRMET`, `IPEKE → TRENJ` otomatik kod yönlendirmesi.
+  - **Sektör & TMS 29 Farkındalığı:** Banka/Finans şirketlerinde `ROE` ve `PD/DD` odaklı puanlama; BIST hisselerinde TMS 29 farkındalığı (büyüme oranları enflasyonu dışlamak için dönem ortalama USD/TRY kuruyla **dolar bazında** ölçülür); `KOZAL → TRALT`, `KOZAA → TRMET`, `IPEKE → TRENJ` otomatik kod yönlendirmesi.
 
 ### 2. Para Akışı & Tema Rotasyonu (Günlük / Haftalık / Aylık / 3 Aylık)
-- **14 BIST Teması** (87 likit hisse) ve **12 ABD / Global Teması** (66 lider hisse, sıfır ETF çifte sayımı).
+- **14 BIST Teması** (87 likit hisse) ve **12 ABD / Global Teması** (67 lider hisse; ETF yok, sadece hisse senedi).
 - Her tema ve hisse için **1G · 1H · 1A · 3A** bazında **Para Akışı Skoru (`-100`..`+100`)**, **Chaikin Money Flow (CMF)** alım/satım baskısı, **RVOL**, **RS Farkı** ve **Rotasyon Etiketleri** (*Rotasyon Başlangıcı*, *Erken Para Girişi*, *Ana Lider Tema*, *Kâr Satışı / Çıkış*).
 - Çift yönlü tema akış çubukları, 4 dönemlik ısı haritası, **Top 10 Giriş / Çıkış** tabloları ve tek tıkla hissenin tam Tekno-Temel analizine geçiş.
 
 ### 3. İzleme Listesi, Çoklu Kıyaslama ve PDF Rapor
 - Kendi BIST + ABD izleme listeni oluştur, tüm hisseleri paralel tarayıp sıralanabilir tabloda kıyasla.
 - Yazdırmaya özel açık renkli şablonla tek tıkla **PDF / Yazdır** dışa aktarımı.
+
+### 4. Şeffaf Puanlama
+- Bilanço puanı **yalnızca mevcut verilerle** hesaplanır: eksik bir kalem puan kazandırmaz ya da kaybettirmez; puanın yanında **veri kapsamı (%)** ve eksik kalemler gösterilir.
+- **Beneish M-Score** bilgi amaçlıdır, puandan düşülmez (yüksek satış büyümesi skoru tek başına eşiğin üzerine taşıyabilir). En az 6/8 bileşen gerçek veriye dayanmıyorsa hesaplanmaz.
+- **RS Tahmini**, IBD'nin yüzdelik RS sıralaması değildir; hissenin endekse göre ağırlıklı fazla getirisinden türetilir.
+- **Para akışı tahminidir**: fiyat, hacim ve gün içi kapanış konumundan (Chaikin) türetilir; gerçek takas / AKD verisi değildir.
 
 ---
 
@@ -57,6 +64,36 @@ python -m uvicorn backend.app:app --host 127.0.0.1 --port 8765
 ```
 Ardından tarayıcıda `http://127.0.0.1:8765` adresini aç.
 
+> Sunucu yalnızca kendi bilgisayarında (`127.0.0.1`) çalışacak şekilde ayarlıdır. İzleme listesi uç noktalarında kimlik doğrulama yoktur; `--host 0.0.0.0` ile ağa açmayın.
+
+---
+
+## Testler
+
+Testler ağ erişimi gerektirmez (Yahoo'ya istek atılmaz) ve her `push`'ta GitHub Actions'ta otomatik çalışır.
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+## Puanların Geriye Dönük Testi
+
+Teknik puanın gerçekten işe yarayıp yaramadığını görmek için: geçmişte her ay, *o güne kadarki* veriyle teknik puan hesaplanır ve sonraki 6 aydaki endekse göre getiriyle karşılaştırılır.
+
+```bash
+python tools/backtest_teknik.py --market us
+python tools/backtest_teknik.py --market bist --horizon 63
+```
+
+> Yalnızca teknik puan test edilebilir (Yahoo geçmişe dönük bilanço vermez). Tema listeleri bugünkü hisselerden oluştuğu için hayatta kalma yanlılığı vardır; sonuçları kesin kanıt olarak değil, eşikleri sorgulamak için kullanın.
+
+## Referans Verilerini Güncelleme
+
+BIST kod değişiklikleri (örn. `KOZAL → TRALT`) ve tema listeleri koda gömülü değildir:
+- `backend/data/bist_symbols.json` — eski→yeni kod yönlendirmeleri ve bilinen BIST kodları
+- `backend/data/themes.json` — para akışı temaları (yalnızca hisse senedi, ETF eklemeyin)
+
 ---
 
 ## Proje Yapısı
@@ -69,11 +106,18 @@ hisse-rontgen/
 │   ├── technical.py     # Minervini, Weinstein, RS, AVWAP, VCP, ATR/ADR, USD grafik
 │   ├── fundamental.py   # Piotroski, Altman, Beneish, ROIC, FCF, değerleme
 │   ├── analyzer.py      # Tekno-Temel bileşik skor ve 4-kadran karar motoru
-│   └── money_flow.py    # 14 BIST + 12 ABD teması para akışı & rotasyon motoru
+│   ├── money_flow.py    # 14 BIST + 12 ABD teması para akışı & rotasyon motoru
+│   ├── cache.py         # Boyut sınırlı (LRU) ve süreli önbellek
+│   ├── reference_data.py# JSON referans verilerini yükler
+│   └── data/            # bist_symbols.json, themes.json
+├── tests/               # Ağ erişimsiz birim ve API testleri (pytest)
+├── tools/
+│   └── backtest_teknik.py  # Teknik puanın geriye dönük testi
 ├── static/
 │   ├── index.html       # Arayüz (Detaylı Analiz, Para Akışı, İzleme Listesi)
 │   ├── styles.css       # Koyu finans teması + PDF/yazdırma stilleri
 │   └── app.js           # TradingView Lightweight Charts ve etkileşim katmanı
 ├── Baslat.cmd           # Tek tıkla Windows başlatıcı
-└── requirements.txt
+├── requirements.txt     # Çalışma bağımlılıkları (yfinance sabit sürüm)
+└── requirements-dev.txt # Test bağımlılıkları
 ```

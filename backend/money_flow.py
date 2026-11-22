@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import threading
 import time
 from typing import Any
 
@@ -9,39 +8,16 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-# BIST Tema Haritasi (BIST resmi sektor endeksleri + 2026 guncel kodlar, 14 saf tema)
-BIST_THEMES: dict[str, list[str]] = {
-    "Bankacılık (XBANK)": ["GARAN.IS", "AKBNK.IS", "ISCTR.IS", "YKBNK.IS", "HALKB.IS", "VAKBN.IS", "TSKB.IS", "ALBRK.IS"],
-    "Sigorta & Aracı Kurum (XSGRT)": ["TURSG.IS", "ANSGR.IS", "AKGRT.IS", "ISMEN.IS"],
-    "Havacılık & Lojistik (XULAS)": ["THYAO.IS", "PGSUS.IS", "TAVHL.IS", "CLEBI.IS", "RYSAS.IS", "PASEU.IS"],
-    "Savunma Sanayi": ["ASELS.IS", "ALTNY.IS", "SDTTR.IS", "ONRYT.IS", "PAPIL.IS", "OTKAR.IS"],
-    "Yazılım & Teknoloji (XUTEK)": ["LOGO.IS", "MIATK.IS", "ARDYZ.IS", "REEDR.IS", "PENTA.IS"],
-    "Elektrik Üretim & Dağıtım (XELKT)": ["ENJSA.IS", "AKSEN.IS", "GWIND.IS", "ODAS.IS", "ZOREN.IS", "TRENJ.IS"],
-    "Enerji Teknolojisi & Ekipman": ["ASTOR.IS", "GESAN.IS", "EUPWR.IS", "KONTR.IS", "CWENE.IS", "SMRTG.IS"],
-    "Petrokimya, Kimya & Gübre (XKMYA)": ["TUPRS.IS", "PETKM.IS", "SASA.IS", "HEKTS.IS", "GUBRF.IS", "ALKIM.IS"],
-    "Demir-Çelik & Altın/Maden (XMANA)": ["EREGL.IS", "KRDMD.IS", "BRSAN.IS", "KCAER.IS", "TRALT.IS", "TRMET.IS", "CVKMD.IS"],
-    "Holdingler (XHOLD)": ["KCHOL.IS", "SAHOL.IS", "ALARK.IS", "DOHOL.IS", "AGHOL.IS", "TKFEN.IS", "SISE.IS"],
-    "Otomotiv & Beyaz Eşya": ["FROTO.IS", "TOASO.IS", "DOAS.IS", "TTRAK.IS", "BRISA.IS", "ARCLK.IS", "VESBE.IS"],
-    "Perakende, Gıda & İçecek": ["BIMAS.IS", "MGROS.IS", "SOKM.IS", "MAVI.IS", "CCOLA.IS", "AEFES.IS", "ULKER.IS", "TABGD.IS"],
-    "Telekom & Sağlık": ["TCELL.IS", "TTKOM.IS", "MPARK.IS", "ECILC.IS", "SELEC.IS"],
-    "İnşaat, Çimento & GYO (XGMYO)": ["ENKAI.IS", "OYAKC.IS", "CIMSA.IS", "EKGYO.IS", "ISGYO.IS", "TRGYO.IS"],
-}
+from .cache import TTLCache
+from .reference_data import themes as load_themes
 
-# ABD / Global Tema Haritasi (Sifir ETF cifte sayimi, 12 saf tema)
-US_THEMES: dict[str, list[str]] = {
-    "Yapay Zekâ & Yarı İletkenler": ["NVDA", "AMD", "AVGO", "TSM", "MU", "ASML", "KLAC"],
-    "Mega-Cap Tech & Bulut/SaaS": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "ORCL", "CRM", "NOW", "PLTR"],
-    "Siber Güvenlik": ["CRWD", "PANW", "FTNT", "ZS"],
-    "AI Güç Altyapısı & Nükleer": ["CEG", "VST", "CCJ", "GEV", "NRG", "OKLO"],
-    "Geleneksel Enerji (Petrol & Gaz)": ["XOM", "CVX", "COP", "SLB"],
-    "Bankacılık & Ödeme Sistemleri": ["JPM", "BAC", "GS", "MS", "WFC", "V", "MA"],
-    "Kripto & Dijital Varlıklar": ["IBIT", "COIN", "MSTR", "MARA", "HOOD"],
-    "Savunma & Havacılık": ["LMT", "RTX", "NOC", "GD", "LHX", "GE"],
-    "Elektrikli Araç, Mobilite & Uzay": ["TSLA", "RKLB", "ASTS", "UBER"],
-    "Sağlık & Biyoteknoloji": ["LLY", "UNH", "NVO", "ABBV", "ISRG"],
-    "Tüketim & Perakende": ["WMT", "COST", "HD", "MCD", "NKE"],
-    "Altın, Gümüş & Emtia": ["GLD", "SLV", "NEM", "FCX"],
-}
+# Tema haritalari: backend/data/themes.json (sadece hisse senedi, ETF yok)
+BIST_THEMES: dict[str, list[str]] = load_themes("bist")
+US_THEMES: dict[str, list[str]] = load_themes("us")
+
+# Son islem tarihi endeksten bu kadar takvim gunu gerideyse (islem durdurma, kotasyondan
+# cikma vb.) hisse bayat veri sayilir ve akis hesabina katilmaz
+MAX_STALE_DAYS = 4
 
 WINDOWS = {
     "1d": 1,
@@ -50,8 +26,7 @@ WINDOWS = {
     "3m": 63,
 }
 
-_FLOW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_FLOW_LOCK = threading.Lock()
+_FLOW_CACHE = TTLCache(max_entries=4)
 FLOW_TTL = 600  # 10 dakika
 
 
@@ -117,8 +92,6 @@ def _compute_window_metrics(
         }
 
     close = df["Close"].astype(float)
-    high = df["High"].astype(float)
-    low = df["Low"].astype(float)
     vol = df["Volume"].fillna(0).astype(float)
 
     p_end = float(close.iloc[-1])
@@ -201,10 +174,9 @@ def compute_money_flow(market: str = "bist", force_refresh: bool = False) -> dic
     mkt = "us" if (market or "bist").lower() == "us" else "bist"
     cache_key = f"flow:{mkt}"
     if not force_refresh:
-        with _FLOW_LOCK:
-            entry = _FLOW_CACHE.get(cache_key)
-            if entry and (time.time() - entry[0]) < FLOW_TTL:
-                return entry[1]
+        cached = _FLOW_CACHE.get(cache_key, FLOW_TTL)
+        if cached is not None:
+            return cached
 
     themes_map = BIST_THEMES if mkt == "bist" else US_THEMES
     bench_symbol = "XU100.IS" if mkt == "bist" else "^GSPC"
@@ -236,9 +208,18 @@ def compute_money_flow(market: str = "bist", force_refresh: bool = False) -> dic
     stocks_list: list[dict[str, Any]] = []
     stock_by_sym: dict[str, dict[str, Any]] = {}
 
+    bench_last = bench_df.index[-1] if not bench_df.empty else None
+    stale_symbols: list[str] = []
+    missing_symbols: list[str] = []
+
     for sym, theme_name in sym_to_theme.items():
         df = _extract_ticker_df(raw, sym)
         if df.empty or len(df) < 10:
+            missing_symbols.append(sym)
+            continue
+        if bench_last is not None and (bench_last - df.index[-1]).days > MAX_STALE_DAYS:
+            # Endeksle ayni gunun verisi yoksa getiriler endeksle kiyaslanamaz
+            stale_symbols.append(sym)
             continue
         last_close = _safe(df["Close"].iloc[-1], 2)
         avg_turnover_20d = _safe(float((df["Close"] * df["Volume"].fillna(0)).iloc[-min(20, len(df)):].mean()), 0)
@@ -373,9 +354,10 @@ def compute_money_flow(market: str = "bist", force_refresh: bool = False) -> dic
         "last_date": last_date,
         "fetched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "breadth": breadth,
+        "excluded": {"stale": stale_symbols, "missing": missing_symbols},
+        "note": "Para akışı; fiyat, hacim ve gün içi kapanış konumundan (Chaikin) TAHMİN edilir. Gerçek takas / aracı kurum (AKD) verisi değildir.",
         "themes": themes_list,
         "stocks": stocks_list,
     }
-    with _FLOW_LOCK:
-        _FLOW_CACHE[cache_key] = (time.time(), result)
+    _FLOW_CACHE.set(cache_key, result)
     return result

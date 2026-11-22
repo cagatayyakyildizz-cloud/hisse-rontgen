@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" integrity="sha384-OK7vELvjHdhUFi31JYioPIcRHTROLdcDa6ZsNWgvgLaKj+9JqhU0Ad8g4wz3CXjA" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -95,7 +95,7 @@
       <div class="welcome-grid">
         <div class="welcome-tile">
           <div class="tile-title">Teknik Analiz</div>
-          <div class="tile-desc">8'li Minervini Şablonu, Haftalık Weinstein Evresi, RS Göreceli Güç, AVWAP, VCP, ATR/ADR Stop ve BIST için USD bazlı grafik.</div>
+          <div class="tile-desc">8'li Minervini Şablonu, Haftalık Weinstein Evresi, RS Tahmini (endekse göre), AVWAP, VCP, ATR/ADR Stop ve BIST için USD bazlı grafik.</div>
         </div>
         <div class="welcome-tile">
           <div class="tile-title">Bilanço &amp; Temel Analiz</div>
@@ -451,7 +451,7 @@
           </div>
 
           <div class="disclaimer" style="margin-top:16px">
-            <strong>Metodoloji Notu:</strong> Para Akışı Skoru (-100 ile +100 arası); hissenin seçilen dönem getirisi, ana endekse karşı göreli ayrışması (RS),
+            <strong>Metodoloji Notu:</strong> Para akışı <strong>tahminidir</strong>: gerçek para giriş/çıkışı değil, fiyat ve hacim davranışından türetilir. Para Akışı Skoru (-100 ile +100 arası); hissenin seçilen dönem getirisi, ana endekse karşı göreli ayrışması (RS),
             gün içi kapanış gücü tabanlı <em>Chaikin Money Flow (CMF)</em> alım/satım baskısı ve 20 günlük ortalamaya göre hacim patlaması (<em>RVOL</em>) ile hesaplanır.
             BIST takas / aracı kurum dağılımı (AKD) verisi değildir; hacim destekli kurumsal birikim/dağıtım yoğunluğunu gösterir. Herhangi bir hisseye tıklayarak tam Tekno-Temel analizini açabilirsiniz.
           </div>

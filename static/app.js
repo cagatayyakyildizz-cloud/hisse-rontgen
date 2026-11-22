@@ -137,6 +137,30 @@
     }
   }
 
+  // Tum API cagrilari icin guvenli yardimci: sunucu JSON yerine HTML hata sayfasi donerse
+  // anlamsiz "JSON parse" hatasi yerine anlasilir bir mesaj uretir; res.ok kontrolunu tek yerde yapar.
+  async function fetchJson(url, options = {}) {
+    let res;
+    try {
+      res = await fetch(url, options);
+    } catch (err) {
+      throw new Error("Sunucuya ulaşılamadı. Uygulamanın çalıştığından emin olun.");
+    }
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`Sunucu beklenmeyen bir yanıt döndürdü (HTTP ${res.status}).`);
+    }
+    if (!res.ok) {
+      let detail = data && data.detail;
+      if (Array.isArray(detail)) detail = detail.map((d) => d.msg || String(d)).join("; ");
+      throw new Error(detail || `İstek başarısız (HTTP ${res.status}).`);
+    }
+    return data;
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
   }
@@ -273,7 +297,7 @@
     } else {
       $("heroUsdPrice").classList.add("hidden");
     }
-    $("heroMeta").textContent = `Son işlem günü: ${t.last_date} · Piyasa Değeri: ${fmtBig(f.market_cap_trade, meta.currency)} · Güncelleme: ${meta.fetched_at}`;
+    $("heroMeta").textContent = `Son işlem günü: ${t.last_date} · Piyasa Değeri: ${fmtBig(f.market_cap_trade, meta.currency_major || meta.currency)} · Güncelleme: ${meta.fetched_at}`;
 
     setGauge("gaugeComp", "scoreComp", verdict.composite_score);
     setGauge("gaugeTech", "scoreTech", t.score);
@@ -324,7 +348,7 @@
       { k: "Weinstein Evresi", v: t.weinstein.label, cls: t.weinstein.stage === 2 ? "pos" : t.weinstein.stage === 4 ? "neg" : "warn" },
       { k: "30 Haftalık SMA", v: t.weinstein.w_sma30 !== null ? `${fmtNum(t.weinstein.w_sma30)} ${meta.currency}` : "—" },
       { k: `Piyasa (${t.benchmark_regime.name})`, v: t.benchmark_regime.status },
-      { k: "Tahmini RS Puanı (1–99)", v: t.relative_strength.rs_score_est ?? "—", cls: (t.relative_strength.rs_score_est || 0) >= 70 ? "pos" : (t.relative_strength.rs_score_est || 0) < 40 ? "neg" : "" },
+      { k: "RS Tahmini (1–99, yüzdelik sıra değil)", v: t.relative_strength.rs_score_est ?? "—", cls: (t.relative_strength.rs_score_est || 0) >= 70 ? "pos" : (t.relative_strength.rs_score_est || 0) < 40 ? "neg" : "" },
       { k: "3A / 1Y Endeks Farkı", v: `${fmtPct(t.relative_strength.excess_3m, 1, true)} / ${fmtPct(t.relative_strength.excess_1y, 1, true)}` },
       { k: "Hisse Getiri (1A / 3A / 1Y)", v: `${fmtPct(t.returns["1m"], 1, true)} / ${fmtPct(t.returns["3m"], 1, true)} / ${fmtPct(t.returns["1y"], 1, true)}` },
       ...(t.usd_analysis ? [{ k: "1Y USD Bazlı Getiri", v: fmtPct(t.usd_analysis.ret_1y_usd, 1, true), cls: (t.usd_analysis.ret_1y_usd || 0) >= 0 ? "pos" : "neg" }] : []),
@@ -397,8 +421,9 @@
 
     const bh = f.balance_health;
     renderKV("debtBox", [
-      { k: "Nakit ve Benzerleri", v: fmtBig(bh.cash, f.financial_currency) },
-      { k: "Toplam Finansal Borç", v: fmtBig(bh.total_debt, f.financial_currency) },
+      { k: "Nakit + Kısa Vadeli Yatırımlar", v: fmtBig(bh.cash, f.financial_currency) },
+      { k: "Toplam Finansal Borç (kiralar dahil)", v: fmtBig(bh.total_debt, f.financial_currency) },
+      { k: "— Kira (Leasing) Yükümlülüğü", v: fmtBig(bh.lease_liabilities, f.financial_currency) },
       { k: "Net Borç", v: bh.net_debt !== null ? (bh.net_debt < 0 ? `Net Nakit (${fmtBig(Math.abs(bh.net_debt), f.financial_currency)})` : fmtBig(bh.net_debt, f.financial_currency)) : "—", cls: bh.net_debt !== null && bh.net_debt < 0 ? "pos" : "" },
       { k: "Net Borç / FAVÖK", v: bh.net_debt_to_ebitda !== null ? `${fmtNum(bh.net_debt_to_ebitda)}x` : "—", cls: bh.net_debt_to_ebitda !== null && bh.net_debt_to_ebitda > 3.5 ? "neg" : (bh.net_debt_to_ebitda !== null && bh.net_debt_to_ebitda <= 1.5 ? "pos" : "") },
       { k: "Cari Oran", v: fmtNum(bh.current_ratio) },
@@ -414,7 +439,7 @@
       { k: "PD/DD (P/B) / Graham (F/K×PD/DD)", v: `${fmtNum(val.pb)} / ${fmtNum(val.graham_product)}` },
       { k: "FD/FAVÖK (EV/EBITDA)", v: val.ev_ebitda !== null ? `${fmtNum(val.ev_ebitda)}x` : "—" },
       { k: "FD/Satışlar / PEG Oranı", v: `${val.ev_sales !== null ? fmtNum(val.ev_sales) + "x" : "—"} / ${fmtNum(val.peg)}` },
-      { k: "Yıllık Ciro / EBIT Büyümesi", v: `${fmtPct(gr.rev_yoy_pct, 1, true)} / ${fmtPct(gr.ebit_yoy_pct, 1, true)}` },
+      { k: f.growth_basis === "USD" ? "Yıllık Ciro / EBIT Büyümesi (USD bazlı)" : "Yıllık Ciro / EBIT Büyümesi", v: `${fmtPct(gr.rev_yoy_pct, 1, true)} / ${fmtPct(gr.ebit_yoy_pct, 1, true)}` },
       { k: "Çeyreklik (YoY) Ciro / Net Kâr", v: `${fmtPct(gr.q_rev_yoy_pct, 1, true)} / ${fmtPct(gr.q_ni_yoy_pct, 1, true)}` },
       { k: "Stok / Ticari Alacak Artışı (YoY)", v: `${fmtPct(gr.inv_yoy_pct, 1, true)} / ${fmtPct(gr.rec_yoy_pct, 1, true)}` },
       { k: "Hisse Seyreltme (Pay Artışı YoY)", v: fmtPct(gr.dilution_pct, 1, true), cls: (gr.dilution_pct || 0) > 10 ? "neg" : "" },
@@ -453,9 +478,7 @@
     showError("");
     setLoading(true, `${sym.toUpperCase()} analiz ediliyor…`);
     try {
-      const res = await fetch(`/api/analyze/${encodeURIComponent(sym)}?market=${encodeURIComponent(mkt)}&refresh=${refresh}`);
-      const payload = await res.json();
-      if (!res.ok) throw new Error(payload.detail || "Bilinmeyen hata");
+      const payload = await fetchJson(`/api/analyze/${encodeURIComponent(sym)}?market=${encodeURIComponent(mkt)}&refresh=${refresh}`);
       renderAnalysis(payload);
     } catch (err) {
       showError(err.message || String(err));
@@ -467,12 +490,13 @@
   // --- Watchlist ---
   async function loadWatchlistMeta() {
     try {
-      const res = await fetch("/api/watchlist");
-      const data = await res.json();
+      const data = await fetchJson("/api/watchlist");
       state.watchlist = data.items || [];
       $("watchlistCount").textContent = String(state.watchlist.length);
       updateWatchButtonState();
-    } catch {}
+    } catch (err) {
+      showError(`İzleme listesi yüklenemedi: ${err.message}`);
+    }
   }
 
   function isInWatchlist(sym) {
@@ -496,18 +520,21 @@
     if (!state.currentData) return;
     const sym = state.currentData.meta.symbol;
     const mkt = state.currentData.meta.is_bist ? "bist" : "us";
-    if (isInWatchlist(sym)) {
-      const res = await fetch(`/api/watchlist/${encodeURIComponent(sym)}`, { method: "DELETE" });
-      const data = await res.json();
-      state.watchlist = data.items || [];
-    } else {
-      const res = await fetch("/api/watchlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: sym, market: mkt }),
-      });
-      const data = await res.json();
-      state.watchlist = data.items || [];
+    try {
+      if (isInWatchlist(sym)) {
+        const data = await fetchJson(`/api/watchlist/${encodeURIComponent(sym)}`, { method: "DELETE" });
+        state.watchlist = data.items || [];
+      } else {
+        const data = await fetchJson("/api/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol: sym, market: mkt }),
+        });
+        state.watchlist = data.items || [];
+      }
+    } catch (err) {
+      showError(`İzleme listesi güncellenemedi: ${err.message}`);
+      return;
     }
     $("watchlistCount").textContent = String(state.watchlist.length);
     updateWatchButtonState();
@@ -523,15 +550,20 @@
     $("wlStatus").textContent = `${state.watchlist.length} hisse paralel olarak taranıyor…`;
     $("wlRefreshBtn").disabled = true;
     try {
-      const res = await fetch("/api/compare", {
+      const data = await fetchJson("/api/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items: state.watchlist }),
       });
-      const data = await res.json();
       state.wlRows = data.rows || [];
-      const errNote = data.errors && data.errors.length ? ` (${data.errors.length} hata)` : "";
-      $("wlStatus").textContent = `${state.wlRows.length} hisse güncellendi${errNote}.`;
+      const parts = [`${state.wlRows.length} hisse güncellendi.`];
+      if (data.errors && data.errors.length) {
+        parts.push(`Analiz edilemeyen: ${data.errors.map((e) => `${e.symbol} (${e.error})`).join(", ")}.`);
+      }
+      if (data.skipped && data.skipped.length) {
+        parts.push(`Tek seferde en fazla ${data.limit} hisse taranır; atlanan: ${data.skipped.join(", ")}.`);
+      }
+      $("wlStatus").textContent = parts.join(" ");
       renderWatchlistTable();
     } catch (err) {
       $("wlStatus").textContent = `Tarama hatası: ${err.message}`;
@@ -584,8 +616,13 @@
       });
       tr.querySelector(".del-btn").addEventListener("click", async (e) => {
         e.stopPropagation();
-        const res = await fetch(`/api/watchlist/${encodeURIComponent(r.symbol)}`, { method: "DELETE" });
-        const data = await res.json();
+        let data;
+        try {
+          data = await fetchJson(`/api/watchlist/${encodeURIComponent(r.symbol)}`, { method: "DELETE" });
+        } catch (err) {
+          $("wlStatus").textContent = `Silinemedi: ${err.message}`;
+          return;
+        }
         state.watchlist = data.items || [];
         state.wlRows = state.wlRows.filter((x) => x.symbol !== r.symbol);
         $("watchlistCount").textContent = String(state.watchlist.length);
@@ -634,9 +671,7 @@
     $("flowRefreshBtn").disabled = true;
     $("flowLoadingText").textContent = `${market === "bist" ? "BIST" : "ABD / Global"} tema ve hisse para akışı hesaplanıyor…`;
     try {
-      const res = await fetch(`/api/money-flow?market=${encodeURIComponent(market)}&refresh=${refresh}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Para akışı yüklenemedi.");
+      const data = await fetchJson(`/api/money-flow?market=${encodeURIComponent(market)}&refresh=${refresh}`);
       state.flowData[market] = data;
       state.flowThemeFilter = "ALL";
       populateThemeFilter(data);
@@ -933,14 +968,15 @@
     const mkt = $("wlMarket").value;
     if (!sym) return;
     $("wlStatus").textContent = `${sym.toUpperCase()} ekleniyor…`;
-    const res = await fetch("/api/watchlist", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: sym, market: mkt }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      $("wlStatus").textContent = data.detail || "Eklenemedi.";
+    let data;
+    try {
+      data = await fetchJson("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: sym, market: mkt }),
+      });
+    } catch (err) {
+      $("wlStatus").textContent = `Eklenemedi: ${err.message}`;
       return;
     }
     $("wlInput").value = "";
